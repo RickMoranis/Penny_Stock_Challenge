@@ -103,6 +103,8 @@ if authenticator is None:
 
 # Check authentication status from session state
 if st.session_state.get("authentication_status"):
+    st.cache_data.clear()
+    print("--- Cleared st.cache_data for debugging price fetch ---")
     # --- User is Logged In ---
     name = st.session_state.get("name")
     username = st.session_state.get("username")
