@@ -75,7 +75,7 @@ def init_auth_db():
 # --- User Management Functions ---
 
 def add_user(username, name, email, plain_password):
-    """Adds a new user to the database with a hashed password."""
+    """Adds a new user. The first user registered is automatically made an admin."""
     hashed = hash_password(plain_password)
     if not hashed:
         return False, "Password hashing failed."
@@ -84,21 +84,39 @@ def add_user(username, name, email, plain_password):
     try:
         conn = sqlite3.connect(DATABASE_FILE)
         cursor = conn.cursor()
-        sql = ''' INSERT INTO users(username, name, email, hashed_password, registration_date)
-                  VALUES(?,?,?,?,?) '''
+
+        # --- Check if any users exist ---
+        cursor.execute("SELECT COUNT(*) FROM users")
+        user_count = cursor.fetchone()[0]
+        # --------------------------------
+
+        # --- Determine admin status ---
+        is_first_user = (user_count == 0)
+        admin_flag = 1 if is_first_user else 0
+        # ----------------------------
+
+        # --- Modified SQL INSERT to include is_admin ---
+        sql = ''' INSERT INTO users(username, name, email, hashed_password, registration_date, is_admin)
+                  VALUES(?,?,?,?,?,?) ''' # Added is_admin placeholder
         params = (
             username,
             name,
             email,
             hashed,
-            datetime.now().isoformat()
+            datetime.now().isoformat(),
+            admin_flag # Use the determined admin flag
         )
+        # ---------------------------------------------
+
         cursor.execute(sql, params)
         conn.commit()
-        print(f"User '{username}' added successfully.")
+
+        admin_status_message = " (as Admin)" if is_first_user else ""
+        print(f"User '{username}' added successfully{admin_status_message}.")
         return True, "User registered successfully."
+
     except sqlite3.IntegrityError as e:
-        # Handle UNIQUE constraint violations (username or email already exists)
+        # (keep existing error handling for unique constraints)
         error_msg = str(e).lower()
         if 'unique constraint failed: users.username' in error_msg:
             print(f"Error adding user: Username '{username}' already exists.")
