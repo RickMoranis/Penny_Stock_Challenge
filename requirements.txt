@@ -1,0 +1,29 @@
+# requirements.txt
+
+# Core Streamlit Framework
+streamlit>=1.45.0
+
+# Data Handling
+pandas>=2.2.0
+numpy>=1.20.0 # Often a dependency of pandas, good to specify
+
+# Authentication & Security
+streamlit-authenticator>=0.4.0
+bcrypt>=4.0.0
+PyYAML # Dependency for streamlit-authenticator
+
+# Finance Data
+yfinance>=0.2.0
+
+# Plotting & Display
+plotly>=6.0.0
+# altair # Often included with Streamlit, uncomment if you use st.altair_chart directly and face issues
+
+# Common Dependencies (often pulled by others, but sometimes good to list)
+requests
+pytz
+urllib3
+
+# Testing Libraries (Optional for deployment, uncomment if needed for CI/CD checks)
+# pytest>=8.0.0
+# pytest-mock>=3.0.0

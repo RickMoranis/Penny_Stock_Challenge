@@ -1,0 +1,9 @@
+# .gitignore file example
+*.db
+*.sqbpro
+.streamlit/
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.env
