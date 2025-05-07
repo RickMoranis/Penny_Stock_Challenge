@@ -4,11 +4,13 @@ import os
 import sqlite3 # Import the sqlite3 library
 from datetime import datetime # Keep datetime for potential type handling
 
-DATABASE_FILE = "trades.db"
+DATA_DIR = "/data" # Define a data directory mount point
+DATABASE_FILE = os.path.join(DATA_DIR, "trades.db") # Path inside /data
 
 def init_db():
     """Initializes the database and creates the trades table if it doesn't exist."""
     try:
+        os.makedirs(DATA_DIR, exist_ok=True)
         conn = sqlite3.connect(DATABASE_FILE)
         cursor = conn.cursor()
         # Create table - Adjust column types as needed

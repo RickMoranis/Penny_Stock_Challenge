@@ -6,7 +6,8 @@ from datetime import datetime
 
 # Use the same database file as data_handler.py
 # Option 1: Define it here (ensure it matches data_handler.py)
-DATABASE_FILE = "trades.db"
+DATA_DIR = "/data" # Define a data directory mount point
+DATABASE_FILE = os.path.join(DATA_DIR, "trades.db") # Path inside /data
 # Option 2 (Slightly cleaner): Import from data_handler if it's defined there
 # from data_handler import DATABASE_FILE # Uncomment if DATABASE_FILE defined in data_handler
 
@@ -39,6 +40,7 @@ def init_auth_db():
     """Initializes the database and creates the users table if it doesn't exist."""
     conn = None
     try:
+        os.makedirs(DATA_DIR, exist_ok=True)
         conn = sqlite3.connect(DATABASE_FILE)
         cursor = conn.cursor()
         cursor.execute('''
