@@ -259,30 +259,30 @@ if st.session_state.get("authentication_status"):
                 ticker_validated = True # Skip validation for existing tickers
             else:
                 # Perform yfinance validation
-                # st.sidebar.info(f"Validating new ticker: {ticker_to_use}...")
-                # try:
-                #     ticker_obj = yf.Ticker(ticker_to_use)
-                #     ticker_info = ticker_obj.info
-                #     # Check if info is usable or fallback to history check
-                #     # Added check for empty info dict
-                #     if isinstance(ticker_info, dict) and ticker_info and ticker_info.get('symbol', '').upper() == ticker_to_use:
-                #         st.sidebar.success(f"Ticker {ticker_to_use} appears valid.")
-                #         ticker_validated = True
-                #     # If info is empty or symbol doesn't match, try history
-                #     elif not ticker_info or ticker_info.get('symbol', '').upper() != ticker_to_use:
-                #          st.sidebar.warning(f"Ticker info limited for {ticker_to_use}. Checking history...")
-                #          hist = ticker_obj.history(period="5d", interval="1d", raise_errors=False) # Check last 5 days
-                #          if not hist.empty and not hist.isnull().all().all(): # Check if history has actual data
-                #               st.sidebar.success(f"Ticker {ticker_to_use} history found. Proceeding.")
-                #               ticker_validated = True
-                #          else:
-                #               st.sidebar.error(f"Invalid or unrecognized ticker: {ticker_to_use}. No valid info or recent history found.")
-                #     else: # Should not happen if above conditions are met, but as fallback
-                #          st.sidebar.error(f"Ticker data inconsistency for symbol: {ticker_to_use}")
-                # except Exception as e:
-                #     st.sidebar.error(f"Could not validate ticker {ticker_to_use}: {e}")
-                #     print(f"yfinance validation error for {ticker_to_use}: {e}") # Log detailed error
-                ticker_validated = True # Force validation to pass temporarily
+                st.sidebar.info(f"Validating new ticker: {ticker_to_use}...")
+                try:
+                    ticker_obj = yf.Ticker(ticker_to_use)
+                    ticker_info = ticker_obj.info
+                    # Check if info is usable or fallback to history check
+                    # Added check for empty info dict
+                    if isinstance(ticker_info, dict) and ticker_info and ticker_info.get('symbol', '').upper() == ticker_to_use:
+                        st.sidebar.success(f"Ticker {ticker_to_use} appears valid.")
+                        ticker_validated = True
+                    # If info is empty or symbol doesn't match, try history
+                    elif not ticker_info or ticker_info.get('symbol', '').upper() != ticker_to_use:
+                         st.sidebar.warning(f"Ticker info limited for {ticker_to_use}. Checking history...")
+                         hist = ticker_obj.history(period="5d", interval="1d", raise_errors=False) # Check last 5 days
+                         if not hist.empty and not hist.isnull().all().all(): # Check if history has actual data
+                              st.sidebar.success(f"Ticker {ticker_to_use} history found. Proceeding.")
+                              ticker_validated = True
+                         else:
+                              st.sidebar.error(f"Invalid or unrecognized ticker: {ticker_to_use}. No valid info or recent history found.")
+                    else: # Should not happen if above conditions are met, but as fallback
+                         st.sidebar.error(f"Ticker data inconsistency for symbol: {ticker_to_use}")
+                except Exception as e:
+                    st.sidebar.error(f"Could not validate ticker {ticker_to_use}: {e}")
+                    print(f"yfinance validation error for {ticker_to_use}: {e}") # Log detailed error
+                
 
         # 5. Validate Sell Action (check holdings)
         if basic_inputs_valid and ticker_determined and ticker_validated and action == 'Sell':
