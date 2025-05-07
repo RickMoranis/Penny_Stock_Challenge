@@ -69,13 +69,24 @@ except Exception as e:
 # Define authenticator variable outside try/except so it's always in scope
 authenticator = None
 try:
-    # Removed explicit CookieManager instantiation as it's not used directly
-    # cookie_manager_instance = stx.CookieManager(key="penny_stock_cookie_manager_explicit")
+     # Read cookie config from Environment Variables
+    cookie_name = os.environ.get("COOKIE_NAME", "pennystockcookie") # Provide a default name
+    cookie_key = os.environ.get("COOKIE_KEY") # MUST be set via platform's Environment Variables
+    cookie_expiry_str = os.environ.get("COOKIE_EXPIRY_DAYS", "30") # Read as string, default 30
 
-    # Read cookie config directly from Streamlit Secrets
-    cookie_name = st.secrets["cookie"]["name"]
-    cookie_key = st.secrets["cookie"]["key"]
-    cookie_expiry = st.secrets["cookie"]["expiry_days"]
+    # Validate required environment variables
+    if not cookie_key:
+        st.error("CRITICAL: COOKIE_KEY environment variable not set!")
+        # Optionally raise an error or st.stop() in production
+        # For now, we'll let Authenticate handle a None key potentially
+        # raise ValueError("COOKIE_KEY environment variable is missing!")
+        st.stop() # Stop the app if the key is missing in deployed env
+
+    try:
+        cookie_expiry = int(cookie_expiry_str)
+    except ValueError:
+        st.warning(f"Invalid COOKIE_EXPIRY_DAYS value. Using default 30 days.")
+        cookie_expiry = 30
 
     # *** Single Authenticator Instantiation ***
     authenticator = stauth.Authenticate(
