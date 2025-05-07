@@ -1,0 +1,16 @@
+# .dockerignore
+.git
+.gitignore
+.dockerignore
+*.db
+*.sqbpro
+.streamlit/
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.env
+tests/
+README.md
+*.png
+*.jpg

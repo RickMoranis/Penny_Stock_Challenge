@@ -7,6 +7,7 @@ from datetime import datetime
 import yaml
 from yaml.loader import SafeLoader
 import streamlit_authenticator as stauth
+import os
 # Removed: import extra_streamlit_components as stx # No longer explicitly used here
 
 # Import from project modules
