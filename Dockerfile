@@ -25,4 +25,4 @@ HEALTHCHECK CMD streamlit hello --server.port=${PORT:-8501}
 # Command to run when the container starts
 # Tells Streamlit to run on all available network interfaces (0.0.0.0)
 # and use the port provided by the platform ($PORT) or default to 8501
-ENTRYPOINT ["streamlit", "run", "app.py", "--server.port=${PORT:-8501}", "--server.address=0.0.0.0"]
+ENTRYPOINT streamlit run app.py --server.port=${PORT:-8501} --server.address=0.0.0.0
