@@ -267,19 +267,24 @@ else:
     st.markdown("Please log in or register to participate.")
     st.divider()
 
+    # Define the tabs for all user actions
     login_tab, register_tab, forgot_tab, reset_tab = st.tabs([
         "Login", "Register", "Forgot Password", "Reset Password"
         ])
 
+    # --- Login Tab ---
     with login_tab:
         st.subheader("Member Login")
         if not credentials_dict["usernames"]:
             st.warning("No users exist. Please register an account.")
         else:
             authenticator.login(location='main')
-            if st.session_state.get("authentication_status") is False: st.error('Username/password is incorrect.')
-            elif st.session_state.get("authentication_status") is None: st.info('Please enter your credentials.')
+            if st.session_state.get("authentication_status") is False:
+                st.error('Username/password is incorrect.')
+            elif st.session_state.get("authentication_status") is None:
+                st.info('Please enter your credentials.')
 
+    # --- Registration Tab ---
     with register_tab:
         st.subheader("Create New Account")
         with st.form("New_User_Registration_Form"):
@@ -290,37 +295,65 @@ else:
             reg_password_confirm = st.text_input("Confirm Password", type="password", key="reg_password_confirm_unique")
             submitted = st.form_submit_button("Register Account")
             if submitted:
-                if not all([reg_name, reg_email, reg_username, reg_password, reg_password_confirm]): st.warning("Please fill all fields.")
-                elif reg_password != reg_password_confirm: st.error("Passwords do not match.")
-                elif "@" not in reg_email or "." not in reg_email.split('@')[-1]: st.error("Please enter a valid email.")
+                if not all([reg_name, reg_email, reg_username, reg_password, reg_password_confirm]):
+                    st.warning("Please fill all fields.")
+                elif reg_password != reg_password_confirm:
+                    st.error("Passwords do not match.")
+                elif "@" not in reg_email or "." not in reg_email.split('@')[-1]:
+                    st.error("Please enter a valid email.")
                 else:
                     try:
-                        if get_user_by_username(reg_username): st.error(f"Username '{reg_username}' is taken.")
-                        elif get_user_by_email(reg_email): st.error(f"Email '{reg_email}' is registered.")
+                        if get_user_by_username(reg_username):
+                            st.error(f"Username '{reg_username}' is already taken.")
+                        elif get_user_by_email(reg_email):
+                            st.error(f"Email '{reg_email}' is registered.")
                         else:
                             success, message = add_user(reg_username, reg_name, reg_email, reg_password)
-                            if success: st.success(message); st.info("Registration successful! Proceed to the Login tab.")
-                            else: st.error(message)
-                    except Exception as e: st.error(f"Database error: {e}")
+                            if success:
+                                st.success(message)
+                                st.info("Registration successful! Proceed to the Login tab.")
+                            else:
+                                st.error(message)
+                    except Exception as e:
+                        st.error(f"Database error: {e}")
 
+    # --- Forgot Password Tab ---
     with forgot_tab:
-        st.subheader("Forgot Password")
+        st.subheader("Request Password Reset")
         try:
+            # This renders a form asking for username
             username_forgot, email_forgot, random_token = authenticator.forgot_password(location='main')
             if username_forgot:
+                # If a username was submitted, send the email
                 success, message = send_password_reset_email(email_forgot, username_forgot, random_token)
-                if success: st.success(message)
-                else: st.error(message)
-            elif username_forgot is False: st.error("Username not found.")
-        except Exception as e: st.error(f"An error occurred: {e}")
+                if success:
+                    st.success(message)
+                else:
+                    st.error(message)
+            elif username_forgot is False:
+                st.error("Username not found.")
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
 
+    # --- Reset Password Tab (CORRECTED LOGIC) ---
     with reset_tab:
-        st.subheader("Reset Password")
+        st.subheader("Reset Your Password")
         try:
-            username_reset, new_password = authenticator.reset_password(location='main')
-            if username_reset:
-                if update_user_password(username_reset, new_password):
-                    st.success("Password reset successfully! Proceed to the Login tab.")
-                else: st.error("Failed to update password.")
-            elif username_reset is False: st.error("Token is invalid or has expired.")
-        except Exception as e: st.error(f"An error occurred: {e}")
+            # The reset_password method renders its own form for username, token, and new password.
+            # It returns True if the user successfully submits the form with a valid token.
+            if authenticator.reset_password(location='main'):
+                # After a successful reset, the library stores the username in session state.
+                username_to_reset = st.session_state.get("username")
+                # Important: You must have a function to update the password in your database.
+                # The authenticator does NOT do this for you.
+                # We need to retrieve the new password from the form's state.
+                # The library makes it available via st.session_state.password
+                new_password = st.session_state.get("password")
+
+                if update_user_password(username_to_reset, new_password):
+                    st.success("Your password has been reset successfully! Please proceed to the Login tab.")
+                else:
+                    st.error("An error occurred while updating your password. Please contact an administrator.")
+
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
