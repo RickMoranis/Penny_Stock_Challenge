@@ -93,9 +93,11 @@ def display_portfolio_value_chart(value_history, participant_name):
         st.error(f"Error plotting portfolio value chart: {e}")
         st.exception(e) # Show full traceback for debugging
 
-# --- Updated Chart Function: Leaderboard Value History ---
 def display_leaderboard_value_chart(portfolios_data):
-    """Displays combined line chart with time frame selection via axis zoom."""
+    """
+    Displays a more accurate combined line chart by normalizing data points to a daily frequency.
+    It forward-fills the last known value for each participant to create a continuous daily timeline.
+    """
     st.subheader("All Participants Value Over Time")
     all_history_dfs = []
 
@@ -103,10 +105,10 @@ def display_leaderboard_value_chart(portfolios_data):
         st.info("No portfolio data available.")
         return
 
-    # Collect valid history data
+    # 1. Collect all valid history data from portfolios
     for participant, data in portfolios_data.items():
         history = data.get('value_history')
-        if history and isinstance(history, (list, dict)) and len(history) >= 2:
+        if history and isinstance(history, list) and len(history) >= 1:
             try:
                 df = pd.DataFrame(history)
                 df['participant'] = participant
@@ -119,53 +121,85 @@ def display_leaderboard_value_chart(portfolios_data):
         return
 
     try:
-        # Combine all histories
+        # 2. Combine all raw histories into a single DataFrame
         combined_df = pd.concat(all_history_dfs, ignore_index=True)
-        combined_df['timestamp'] = pd.to_datetime(combined_df['timestamp'])
+        combined_df['timestamp'] = pd.to_datetime(combined_df['timestamp']).dt.tz_localize(None) # Remove timezone for uniform processing
         combined_df = combined_df.sort_values(by='timestamp')
 
-        # --- Add Time Frame Selector ---
+        # --- DATA NORMALIZATION & FORWARD-FILLING ---
+        # 3. Create a complete daily date range for the entire competition
+        if combined_df.empty:
+            st.info("No trade data to plot.")
+            return
+        start_date = combined_df['timestamp'].min().normalize()
+        end_date = pd.Timestamp.now().normalize() # Use today as the end date
+        full_date_range = pd.date_range(start=start_date, end=end_date, freq='D')
+
+        # 4. Normalize each participant's data to the full date range
+        normalized_dfs = []
+        for participant_name, group in combined_df.groupby('participant'):
+            # Set timestamp as index to prepare for reindexing
+            group = group.set_index('timestamp').sort_index()
+            # Drop duplicate timestamps, keeping the last value for that day
+            group = group[~group.index.duplicated(keep='last')]
+
+            # Reindex the participant's data onto the full daily timeline
+            participant_normalized = group.reindex(full_date_range)
+            
+            # Forward-fill the missing values
+            participant_normalized['total_value'].ffill(inplace=True)
+            
+            # Back-fill the very first values if the user didn't trade on day 1
+            participant_normalized['total_value'].bfill(inplace=True) 
+
+            participant_normalized['participant'] = participant_name # Restore participant column
+            normalized_dfs.append(participant_normalized)
+
+        if not normalized_dfs:
+            st.info("Data normalization failed. Cannot plot chart.")
+            return
+            
+        # 5. Combine the normalized dataframes into the final plotting dataframe
+        plot_df = pd.concat(normalized_dfs).reset_index().rename(columns={'index': 'timestamp'})
+
+
+        # --- Time Frame Selector (works on the new, dense data) ---
         time_frame_leaderboard = st.radio(
             "Select Time Frame:",
             ("1D", "1W", "1M", "All"),
-            index=3,  # Default to 'All'
+            index=3,
             horizontal=True,
-            key="time_filter_leaderboard" # Unique key for this chart
+            key="time_filter_leaderboard"
         )
 
-        # Plot the *full* data first
-        fig = px.line(combined_df,
+        fig = px.line(plot_df,
                       x='timestamp',
                       y='total_value',
                       color='participant',
                       title=f"Portfolio Value Comparison ({time_frame_leaderboard})",
-                      labels={'timestamp': 'Time', 'total_value': 'Portfolio Value ($)', 'participant': 'Participant'})
+                      labels={'timestamp': 'Date', 'total_value': 'Portfolio Value ($)', 'participant': 'Participant'})
         fig.update_layout(hovermode="x unified")
+        fig.update_traces(line=dict(shape='hv'), connectgaps=True) # 'hv' creates the step-like plot shape
 
-        # --- Adjust X-axis range based on selection ---
-        now = pd.Timestamp.now(tz=combined_df['timestamp'].dt.tz) # Match timezone if exists
-        start_date = combined_df['timestamp'].min() # Default start
-        end_date = now # Default end
-
+        # Adjust X-axis range based on selection
+        now = pd.Timestamp.now()
+        axis_start_date = plot_df['timestamp'].min()
+        
         if time_frame_leaderboard == "1D":
-            start_date = now.normalize()
+            axis_start_date = now - pd.Timedelta(days=1)
         elif time_frame_leaderboard == "1W":
-            start_date = now - pd.Timedelta(days=7)
+            axis_start_date = now - pd.Timedelta(days=7)
         elif time_frame_leaderboard == "1M":
-            start_date = now - pd.Timedelta(days=30)
-        # 'All' uses default full range
+            axis_start_date = now - pd.Timedelta(days=30)
 
-        # Apply range to x-axis
-        # Ensure start_date is not after end_date
-        if start_date < end_date:
-             fig.update_xaxes(range=[start_date, end_date])
-        # else: use default full range if calculation is weird
+        if axis_start_date < now:
+             fig.update_xaxes(range=[axis_start_date, now])
 
         st.plotly_chart(fig, use_container_width=True)
+
     except Exception as e:
          st.error(f"Error plotting combined value chart: {e}")
-         st.exception(e)
-
+         st.exception(e) # Show full traceback for debugging
 
 # (display_portfolio_composition_chart remains the same)
 def display_portfolio_composition_chart(participant_data):
