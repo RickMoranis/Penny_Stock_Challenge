@@ -10,10 +10,10 @@ import streamlit_authenticator as stauth
 from data_handler import load_data, save_trade, delete_trade
 from auth_handler import (
     get_all_users, add_user, get_user_by_username, get_user_by_email, delete_user,
-    update_user_password
+    update_user_password, check_password # Ensure check_password is imported
 )
 from portfolio import calculate_portfolio
-from utils import get_current_price, send_password_reset_email
+from utils import get_current_price
 from display import display_portfolio, display_leaderboard
 
 # --- Page Configuration ---
@@ -47,43 +47,26 @@ except Exception as e:
     credentials_dict = {"usernames": {}}
 
 
-# --- Initialize Authenticator Using Environment Variables for Deployment ---
+# --- Initialize Authenticator ---
 authenticator = None
 try:
-    # Read cookie config from Environment Variables (set in Railway)
-    # Provide sensible defaults for local development if needed
-    cookie_name = os.environ.get("COOKIE_NAME", "pennystockcookie")
-    cookie_key = os.environ.get("COOKIE_KEY") # This MUST be set in Railway
+    # Read cookie config from Environment Variables (set in Railway or your deployment platform)
+    cookie_name = os.environ.get("COOKIE_NAME", "pennystockcookie_local")
+    cookie_key = os.environ.get("COOKIE_KEY", "a_default_secret_key_for_local_dev") # Use a default for local dev
     cookie_expiry_str = os.environ.get("COOKIE_EXPIRY_DAYS", "30")
 
-    # Critical check for the deployment environment
-    if not cookie_key:
-        # This will cause the app to stop gracefully in Railway if the key isn't set
-        st.error("CRITICAL ERROR: COOKIE_KEY environment variable is not set in the deployment environment.")
-        st.stop()
-
-    try:
-        cookie_expiry = int(cookie_expiry_str)
-    except ValueError:
-        st.warning(f"Invalid COOKIE_EXPIRY_DAYS value. Using default 30 days.")
-        cookie_expiry = 30
+    if cookie_key == "a_default_secret_key_for_local_dev":
+        st.warning("Using a default cookie key. Set the COOKIE_KEY environment variable for production.")
 
     authenticator = stauth.Authenticate(
         credentials_dict,
         cookie_name,
         cookie_key,
-        cookie_expiry
+        int(cookie_expiry_str)
     )
-
 except Exception as e:
-     st.error(f"Error during authenticator initialization: {e}")
-     st.exception(e)
+     st.error(f"Error initializing authenticator: {e}")
      st.stop()
-
-# Ensure authenticator was successfully created before proceeding
-if authenticator is None:
-    st.error("Authenticator could not be initialized. App cannot proceed.")
-    st.stop()
 
 
 # --- Authentication Check and App Logic ---
@@ -98,15 +81,45 @@ if st.session_state.get("authentication_status"):
         st.session_state.is_admin = (current_user_data.get('is_admin', 0) == 1)
     else:
         st.session_state.is_admin = False
-        st.warning("Could not verify user data after login. Please log out and back in.")
+        st.warning("Could not verify user data after login.")
 
     # --- Sidebar ---
     st.sidebar.write(f'Welcome *{name}* ({username})')
     if st.session_state.get('is_admin'):
         st.sidebar.info("👑 Admin Access")
     authenticator.logout('Logout', 'sidebar', key='logout_button')
+    st.sidebar.divider()
 
-    # --- Load trade data and calculate portfolios ---
+    # --- NEW: Change Password section in Sidebar ---
+    with st.sidebar.expander("🔑 Change My Password"):
+        with st.form("change_password_form", clear_on_submit=True):
+            current_password = st.text_input("Current Password", type="password", key="change_pw_current")
+            new_password = st.text_input("New Password", type="password", key="change_pw_new")
+            confirm_new_password = st.text_input("Confirm New Password", type="password", key="change_pw_confirm")
+            submitted = st.form_submit_button("Change Password")
+
+            if submitted:
+                if not all([current_password, new_password, confirm_new_password]):
+                    st.warning("Please fill all password fields.")
+                elif new_password != confirm_new_password:
+                    st.error("New passwords do not match.")
+                else:
+                    # Verify current password
+                    user_data = get_user_by_username(username)
+                    if user_data and check_password(current_password, user_data['hashed_password']):
+                        # If correct, update to new password
+                        if update_user_password(username, new_password):
+                            st.success("Password updated successfully!")
+                        else:
+                            st.error("Failed to update password. Please contact admin.")
+                    else:
+                        st.error("Current password is not correct.")
+
+
+    st.sidebar.divider()
+    # --- Trade Entry Form ---
+    st.sidebar.header(f"Enter New Trade")
+    # ... (Your existing trade entry form logic) ...
     try:
         trades = load_data()
         portfolios = calculate_portfolio(trades.copy())
@@ -114,9 +127,6 @@ if st.session_state.get("authentication_status"):
         st.error(f"An critical error occurred loading data or calculating portfolios: {e}")
         trades = pd.DataFrame()
         portfolios = {}
-
-    # --- Sidebar for Trade Entry ---
-    st.sidebar.header(f"Enter New Trade")
     existing_tickers = sorted([str(t) for t in trades['ticker'].dropna().unique()]) if not trades.empty else []
     ticker_options = ["-- Enter New Ticker --"] + existing_tickers
     selected_ticker_option = st.sidebar.selectbox("Ticker Symbol:", ticker_options, key='ticker_select_sidebar')
@@ -129,6 +139,7 @@ if st.session_state.get("authentication_status"):
     trade_button = st.sidebar.button("Record Trade", type="primary", key='trade_button_sidebar')
 
     if trade_button:
+        # ... (Your existing trade processing logic) ...
         # --- Trade Processing Logic ---
         basic_inputs_valid = False; ticker_determined = False; ticker_validated = False; sell_action_valid = True
         ticker_to_use = ""
@@ -147,8 +158,7 @@ if st.session_state.get("authentication_status"):
             st.sidebar.info(f"Validating new ticker: {ticker_to_use}...")
             try:
                 ticker_obj = yf.Ticker(ticker_to_use)
-                ticker_info = ticker_obj.info
-                if isinstance(ticker_info, dict) and ticker_info and ticker_info.get('symbol'):
+                if ticker_obj.info and ticker_obj.info.get('symbol'):
                     ticker_validated = True; st.sidebar.success(f"Ticker {ticker_to_use} appears valid.")
                 else: st.sidebar.error(f"Invalid or unrecognized ticker: {ticker_to_use}.")
             except Exception as e: st.sidebar.error(f"Could not validate ticker {ticker_to_use}: {e}")
@@ -174,17 +184,18 @@ if st.session_state.get("authentication_status"):
     st.title(f"📈 Penny Stock Trading Competition - Welcome {name}! 🏆")
     st.markdown("---")
 
+    # --- View Selection and Display Logic ---
     if not isinstance(portfolios, dict):
-        st.error("Portfolio data is unavailable or invalid.")
-    elif not portfolios and (not trades.empty and not trades[trades['participant'] == username].empty):
-         st.warning("Portfolio data could not be calculated from your existing trades. Please check data or contact admin.")
+        st.error("Portfolio data is unavailable.")
     else:
         view_options = ["My Dashboard", "Leaderboard"]
-        if st.session_state.get('is_admin'): view_options.append("Admin Panel")
+        if st.session_state.get('is_admin'):
+            view_options.append("Admin Panel")
         view_option = st.selectbox("Select View:", view_options, label_visibility="collapsed", key='view_select_main')
         st.markdown("---")
 
         if view_option == "My Dashboard":
+            # ... (Your existing My Dashboard logic) ...
             participant_data = portfolios.get(username)
             st.header(f"📊 {name}'s Dashboard")
             if participant_data:
@@ -217,6 +228,7 @@ if st.session_state.get("authentication_status"):
                  st.info("👋 Welcome! Enter your first trade to get started.")
 
         elif view_option == "Leaderboard":
+            # ... (Your existing Leaderboard logic) ...
             leaderboard_table_data = []
             initial_capital = 500.0
             for p_name, p_data in portfolios.items():
@@ -227,8 +239,11 @@ if st.session_state.get("authentication_status"):
             display_leaderboard(leaderboard_table_data, portfolios)
 
         elif view_option == "Admin Panel":
+            # --- Admin Panel Logic ---
             if not st.session_state.get('is_admin'): st.error("⛔ Access Denied."); st.stop()
             st.header("👑 Admin Panel")
+
+            # --- User Management Section ---
             st.subheader("User Management")
             try:
                 all_users_data = get_all_users()
@@ -239,25 +254,36 @@ if st.session_state.get("authentication_status"):
                     users_df_display['Admin?'] = users_df_display['Admin?'].apply(lambda x: 'Yes' if x == 1 else 'No')
                     st.dataframe(users_df_display, hide_index=True, use_container_width=True)
 
-                    st.subheader("Delete User")
-                    usernames_list = [""] + sorted([user['username'] for user in all_users_data if user['username'] != username])
-                    user_to_delete = st.selectbox("Select user to delete:", usernames_list, key="delete_user_select")
-                    if user_to_delete:
-                        if st.button(f"⚠️ Delete User '{user_to_delete}'", type="primary"):
-                            st.session_state[f'confirm_delete_{user_to_delete}'] = True
-                            st.rerun()
-                        if st.session_state.get(f'confirm_delete_{user_to_delete}'):
-                            st.warning(f"**Confirm permanent deletion of '{user_to_delete}'**", icon="🚨")
-                            col1, col2 = st.columns(2)
-                            if col1.button("Yes, Delete Permanently", key=f"final_delete_{user_to_delete}"):
-                                if delete_user(user_to_delete): st.success(f"User '{user_to_delete}' deleted.")
-                                else: st.error(f"Failed to delete '{user_to_delete}'.")
-                                del st.session_state[f'confirm_delete_{user_to_delete}']
-                                st.cache_data.clear()
-                                st.rerun()
-                            if col2.button("Cancel", key=f"cancel_delete_{user_to_delete}"):
-                                del st.session_state[f'confirm_delete_{user_to_delete}']
-                                st.rerun()
+                    st.markdown("---")
+                    # --- Admin Actions in Columns ---
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.subheader("Delete User")
+                        usernames_list_del = [""] + sorted([user['username'] for user in all_users_data if user['username'] != username])
+                        user_to_delete = st.selectbox("Select user to delete:", usernames_list_del, key="delete_user_select")
+                        if user_to_delete:
+                            if st.button(f"⚠️ Delete User '{user_to_delete}'", type="primary"):
+                                if delete_user(user_to_delete):
+                                    st.success(f"User '{user_to_delete}' deleted.")
+                                    st.cache_data.clear()
+                                    st.rerun()
+                                else:
+                                    st.error(f"Failed to delete '{user_to_delete}'.")
+
+                    with col2:
+                        st.subheader("Reset User Password")
+                        usernames_list_reset = [""] + sorted([user['username'] for user in all_users_data])
+                        user_to_reset = st.selectbox("Select user to reset:", usernames_list_reset, key="reset_user_select")
+                        if user_to_reset:
+                             # Define the generic password
+                            generic_password = "password123"
+                            if st.button(f"🔑 Reset password for '{user_to_reset}'", type="primary"):
+                                if update_user_password(user_to_reset, generic_password):
+                                    st.success(f"Password for '{user_to_reset}' has been reset to: `{generic_password}`. Please inform the user.")
+                                else:
+                                    st.error(f"Failed to reset password for '{user_to_reset}'.")
+
                 else: st.info("No users found.")
             except Exception as e: st.error(f"Error loading users: {e}")
 
@@ -267,24 +293,17 @@ else:
     st.markdown("Please log in or register to participate.")
     st.divider()
 
-    # Define the tabs for all user actions
-    login_tab, register_tab, forgot_tab, reset_tab = st.tabs([
-        "Login", "Register", "Forgot Password", "Reset Password"
-        ])
+    login_tab, register_tab = st.tabs(["Login", "Register"])
 
-    # --- Login Tab ---
     with login_tab:
         st.subheader("Member Login")
         if not credentials_dict["usernames"]:
             st.warning("No users exist. Please register an account.")
         else:
             authenticator.login(location='main')
-            if st.session_state.get("authentication_status") is False:
-                st.error('Username/password is incorrect.')
-            elif st.session_state.get("authentication_status") is None:
-                st.info('Please enter your credentials.')
+            if st.session_state.get("authentication_status") is False: st.error('Username/password is incorrect.')
+            elif st.session_state.get("authentication_status") is None: st.info('Please enter your credentials.')
 
-    # --- Registration Tab ---
     with register_tab:
         st.subheader("Create New Account")
         with st.form("New_User_Registration_Form"):
@@ -295,65 +314,15 @@ else:
             reg_password_confirm = st.text_input("Confirm Password", type="password", key="reg_password_confirm_unique")
             submitted = st.form_submit_button("Register Account")
             if submitted:
-                if not all([reg_name, reg_email, reg_username, reg_password, reg_password_confirm]):
-                    st.warning("Please fill all fields.")
-                elif reg_password != reg_password_confirm:
-                    st.error("Passwords do not match.")
-                elif "@" not in reg_email or "." not in reg_email.split('@')[-1]:
-                    st.error("Please enter a valid email.")
+                if not all([reg_name, reg_email, reg_username, reg_password, reg_password_confirm]): st.warning("Please fill all fields.")
+                elif reg_password != reg_password_confirm: st.error("Passwords do not match.")
+                elif "@" not in reg_email or "." not in reg_email.split('@')[-1]: st.error("Please enter a valid email.")
                 else:
                     try:
-                        if get_user_by_username(reg_username):
-                            st.error(f"Username '{reg_username}' is already taken.")
-                        elif get_user_by_email(reg_email):
-                            st.error(f"Email '{reg_email}' is registered.")
+                        if get_user_by_username(reg_username): st.error(f"Username '{reg_username}' is taken.")
+                        elif get_user_by_email(reg_email): st.error(f"Email '{reg_email}' is registered.")
                         else:
                             success, message = add_user(reg_username, reg_name, reg_email, reg_password)
-                            if success:
-                                st.success(message)
-                                st.info("Registration successful! Proceed to the Login tab.")
-                            else:
-                                st.error(message)
-                    except Exception as e:
-                        st.error(f"Database error: {e}")
-
-    # --- Forgot Password Tab ---
-    with forgot_tab:
-        st.subheader("Request Password Reset")
-        try:
-            # This renders a form asking for username
-            username_forgot, email_forgot, random_token = authenticator.forgot_password(location='main')
-            if username_forgot:
-                # If a username was submitted, send the email
-                success, message = send_password_reset_email(email_forgot, username_forgot, random_token)
-                if success:
-                    st.success(message)
-                else:
-                    st.error(message)
-            elif username_forgot is False:
-                st.error("Username not found.")
-        except Exception as e:
-            st.error(f"An error occurred: {e}")
-
-    # --- Reset Password Tab (CORRECTED LOGIC) ---
-    with reset_tab:
-        st.subheader("Reset Your Password")
-        try:
-            # The reset_password method renders its own form for username, token, and new password.
-            # It returns True if the user successfully submits the form with a valid token.
-            if authenticator.reset_password(location='main'):
-                # After a successful reset, the library stores the username in session state.
-                username_to_reset = st.session_state.get("username")
-                # Important: You must have a function to update the password in your database.
-                # The authenticator does NOT do this for you.
-                # We need to retrieve the new password from the form's state.
-                # The library makes it available via st.session_state.password
-                new_password = st.session_state.get("password")
-
-                if update_user_password(username_to_reset, new_password):
-                    st.success("Your password has been reset successfully! Please proceed to the Login tab.")
-                else:
-                    st.error("An error occurred while updating your password. Please contact an administrator.")
-
-        except Exception as e:
-            st.error(f"An error occurred: {e}")
+                            if success: st.success(message); st.info("Registration successful! Proceed to the Login tab.")
+                            else: st.error(message)
+                    except Exception as e: st.error(f"Database error: {e}")
