@@ -42,6 +42,8 @@ def display_portfolio_value_chart(value_history, participant_name):
     try:
         history_df = pd.DataFrame(value_history)
         history_df['timestamp'] = pd.to_datetime(history_df['timestamp'])
+        history_df['total_value'] = pd.to_numeric(history_df['total_value'], errors='coerce')
+        history_df.dropna(subset=['total_value'], inplace=True)
 
         if len(history_df) < 2:
             st.info("Need at least two data points (e.g., one trade) to show a trend line.")
@@ -49,36 +51,13 @@ def display_portfolio_value_chart(value_history, participant_name):
             return
 
         history_df = history_df.sort_values(by='timestamp').set_index('timestamp')
-
-        time_frame = st.radio(
-            "Select Time Frame:", ("1D", "1W", "1M", "All"),
-            index=3, horizontal=True, key=f"time_filter_{participant_name}"
-        )
-
-        now = pd.Timestamp.now(tz=history_df.index.tz)
-        plot_df = history_df
-
-        if time_frame != "All":
-            days = {"1D": 1, "1W": 7, "1M": 30}[time_frame]
-            start_date = now - pd.Timedelta(days=days)
-            try:
-                anchor_point = history_df[history_df.index < start_date].iloc[-1:]
-            except IndexError:
-                anchor_point = pd.DataFrame()
-            period_data = history_df[history_df.index >= start_date]
-            plot_df = pd.concat([anchor_point, period_data])
-
-        if plot_df.empty or len(plot_df) < 2:
-            st.info(f"No portfolio data available for the selected '{time_frame}' period.")
-            return
-
-        plot_df = plot_df.reset_index()
+        plot_df = history_df.reset_index()
 
         fig = px.line(
             plot_df,
             x='timestamp',
             y='total_value',
-            title=f"{participant_name}'s Portfolio Value ({time_frame})",
+            title=f"{participant_name}'s Portfolio Value",
             labels={'timestamp': 'Date', 'total_value': 'Portfolio Value ($)'}
         )
         fig.update_layout(hovermode="x unified")
@@ -100,14 +79,14 @@ def display_leaderboard_value_chart(portfolios_data):
         return
 
     for participant, data in portfolios_data.items():
-        history = data.get('value_history')
-        if history and isinstance(history, list) and len(history) >= 1:
-            try:
-                df = pd.DataFrame(history)
-                df['participant'] = participant
-                all_history_dfs.append(df)
-            except Exception:
-                pass
+        if history := data.get('value_history'):
+            if isinstance(history, list) and len(history) >= 1:
+                try:
+                    df = pd.DataFrame(history)
+                    df['participant'] = participant
+                    all_history_dfs.append(df)
+                except Exception:
+                    pass
 
     if not all_history_dfs:
         st.info("No valid history data found across all participants to plot a chart.")
@@ -115,9 +94,19 @@ def display_leaderboard_value_chart(portfolios_data):
 
     try:
         combined_df = pd.concat(all_history_dfs, ignore_index=True)
-        combined_df['timestamp'] = pd.to_datetime(combined_df['timestamp']).dt.tz_localize(None)
-        combined_df = combined_df.sort_values(by='timestamp')
 
+        # --- NEW: Force data types to be correct and drop bad data ---
+        combined_df['timestamp'] = pd.to_datetime(combined_df['timestamp'], errors='coerce')
+        combined_df['total_value'] = pd.to_numeric(combined_df['total_value'], errors='coerce')
+        combined_df.dropna(subset=['timestamp', 'total_value'], inplace=True)
+
+        if combined_df.empty:
+            st.warning("Chart data is empty after cleaning. Please check source data.")
+            return
+            
+        combined_df = combined_df.sort_values(by='timestamp')
+        
+        # Normalization
         start_date = combined_df['timestamp'].min().normalize()
         end_date = pd.Timestamp.now().normalize()
         full_date_range = pd.date_range(start=start_date, end=end_date, freq='D')
@@ -132,42 +121,39 @@ def display_leaderboard_value_chart(portfolios_data):
             participant_normalized['participant'] = name
             normalized_dfs.append(participant_normalized)
 
-        if not normalized_dfs:
-            st.info("Data normalization failed. Cannot plot chart.")
-            return
-
         plot_df = pd.concat(normalized_dfs).reset_index().rename(columns={'index': 'timestamp'})
+        plot_df.dropna(subset=['total_value'], inplace=True) # Final safety check
 
+        # --- PLOTTING ---
         fig = px.line(
-            plot_df,
-            x='timestamp',
-            y='total_value',
-            color='participant',
+            plot_df, x='timestamp', y='total_value', color='participant',
             title="Portfolio Value Comparison",
             labels={'timestamp': 'Date', 'total_value': 'Portfolio Value ($)'}
         )
         
-        # --- FIX: Manually set the Y-axis range to prevent auto-range errors ---
+        # Manual Y-axis ranging
         if not plot_df.empty:
             min_val = plot_df['total_value'].min()
             max_val = plot_df['total_value'].max()
-            
-            # Add 10% padding to the top and bottom
             padding = (max_val - min_val) * 0.1
-            if padding < 10:  # If all values are the same, padding is 0. Add a default.
-                padding = max_val * 0.1
-            
-            y_range = [min_val - padding, max_val + padding]
-            fig.update_yaxes(range=y_range)
-        # --- END FIX ---
+            if padding < 10:
+                padding = max_val * 0.1 if max_val > 0 else 10
+            fig.update_yaxes(range=[min_val - padding, max_val + padding])
 
         fig.update_layout(hovermode="x unified", legend_title_text='Participant')
         fig.update_traces(line=dict(shape='hv'))
-
         st.plotly_chart(fig, use_container_width=True)
+
+        # --- NEW: Debugging Expander ---
+        with st.expander("Debug: Chart Data"):
+            st.write("This is the final data being sent to the chart. If the chart looks wrong, the values here might be incorrect.")
+            st.dataframe(plot_df)
+            st.write("Descriptive Statistics for 'total_value':")
+            st.dataframe(plot_df['total_value'].describe())
+
     except Exception as e:
-        st.error(f"Error plotting leaderboard chart: {e}")
-        st.exception(e) # Show full traceback for debugging
+        st.error(f"An error occurred while plotting the leaderboard chart: {e}")
+        st.exception(e)
 
 def display_portfolio_composition_chart(participant_data):
     """Displays a pie chart of the user's asset allocation."""
@@ -191,7 +177,6 @@ def display_portfolio_composition_chart(participant_data):
     st.plotly_chart(fig, use_container_width=True)
 
 # --- Main Display Functions ---
-
 def display_portfolio(participant_data):
     """Renders the entire user dashboard view, including metrics and charts."""
     st.subheader("Portfolio Summary")
