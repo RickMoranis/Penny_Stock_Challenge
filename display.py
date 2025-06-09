@@ -74,7 +74,6 @@ def display_portfolio_value_chart(value_history, participant_name):
 
         plot_df = plot_df.reset_index()
 
-        # FIX: Moved the 'labels' argument from update_layout() to px.line()
         fig = px.line(
             plot_df,
             x='timestamp',
@@ -90,7 +89,8 @@ def display_portfolio_value_chart(value_history, participant_name):
 
 def display_leaderboard_value_chart(portfolios_data):
     """
-    Displays a more accurate combined line chart by normalizing data points to a daily frequency.
+    Displays a more accurate combined line chart by normalizing data points to a daily frequency
+    and manually setting the Y-axis range to prevent auto-ranging errors.
     """
     st.subheader("All Participants Value Over Time")
     all_history_dfs = []
@@ -138,7 +138,6 @@ def display_leaderboard_value_chart(portfolios_data):
 
         plot_df = pd.concat(normalized_dfs).reset_index().rename(columns={'index': 'timestamp'})
 
-        # FIX: Moved the 'labels' argument from update_layout() to px.line()
         fig = px.line(
             plot_df,
             x='timestamp',
@@ -147,12 +146,28 @@ def display_leaderboard_value_chart(portfolios_data):
             title="Portfolio Value Comparison",
             labels={'timestamp': 'Date', 'total_value': 'Portfolio Value ($)'}
         )
+        
+        # --- FIX: Manually set the Y-axis range to prevent auto-range errors ---
+        if not plot_df.empty:
+            min_val = plot_df['total_value'].min()
+            max_val = plot_df['total_value'].max()
+            
+            # Add 10% padding to the top and bottom
+            padding = (max_val - min_val) * 0.1
+            if padding < 10:  # If all values are the same, padding is 0. Add a default.
+                padding = max_val * 0.1
+            
+            y_range = [min_val - padding, max_val + padding]
+            fig.update_yaxes(range=y_range)
+        # --- END FIX ---
+
         fig.update_layout(hovermode="x unified", legend_title_text='Participant')
         fig.update_traces(line=dict(shape='hv'))
 
         st.plotly_chart(fig, use_container_width=True)
     except Exception as e:
         st.error(f"Error plotting leaderboard chart: {e}")
+        st.exception(e) # Show full traceback for debugging
 
 def display_portfolio_composition_chart(participant_data):
     """Displays a pie chart of the user's asset allocation."""
