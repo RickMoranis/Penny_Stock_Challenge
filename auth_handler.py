@@ -239,6 +239,34 @@ def delete_user(username_to_delete: str) -> bool:
         if conn:
             conn.close()
 
+def update_user_password(username: str, new_plain_password: str) -> bool:
+    """Hashes a new password and updates it for a given user."""
+    new_hashed_password = hash_password(new_plain_password)
+    if not new_hashed_password:
+        print(f"Failed to hash new password for user '{username}'.")
+        return False
+
+    conn = None
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        cursor = conn.cursor()
+        sql = "UPDATE users SET hashed_password = ? WHERE username = ?"
+        cursor.execute(sql, (new_hashed_password, username))
+        updated_count = cursor.rowcount
+        conn.commit()
+        if updated_count > 0:
+            print(f"Successfully updated password for user '{username}'.")
+            return True
+        else:
+            print(f"User '{username}' not found for password update.")
+            return False
+    except sqlite3.Error as e:
+        print(f"Database error updating password for '{username}': {e}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
 
 # --- Initialize DB on module load ---
 print(f"Auth handler module loaded. Checking/Initializing users table in: {DATABASE_FILE}")

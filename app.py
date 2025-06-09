@@ -8,6 +8,8 @@ import yaml
 from yaml.loader import SafeLoader
 import streamlit_authenticator as stauth
 import os
+from utils import send_password_reset_email # <-- ADD
+from auth_handler import update_user_password # <-- ADD
 # Removed: import extra_streamlit_components as stx # No longer explicitly used here
 
 # Import from project modules
@@ -676,37 +678,94 @@ if st.session_state.get("authentication_status"):
 
 # --- User NOT Logged In ---
 else:
-    # Display Login and Registration options using tabs
     st.title("📈 Penny Stock Trading Competition")
     st.markdown("Please log in or register to participate.")
     st.divider()
+    # Use tabs for Login, Register, Forgot Password, and Reset Password
+    login_tab, register_tab, forgot_tab, reset_tab = st.tabs([
+        "Login", "Register", "Forgot Password", "Reset Password"
+        ])
 
-    login_tab, register_tab = st.tabs(["Login", "Register"])
-
-    # --- Login Tab ---
     with login_tab:
         st.subheader("Member Login")
-
-
-        # Check if the credentials dictionary actually contains any users
         if not credentials_dict["usernames"]:
-            # If no users exist in the database, prompt registration
-            st.warning("No users found in the database. Please use the 'Register' tab to create the first account.")
+            st.warning("No users found. Please use the 'Register' tab.")
         else:
+            authenticator.login(location='main')
+            if st.session_state.get("authentication_status") is False:
+                st.error('Username/password is incorrect.')
+            elif st.session_state.get("authentication_status") is None:
+                st.info('Please enter your username and password.')
 
-            # Only call authenticator.login if users exist and authenticator is initialized
-            if authenticator:
-                authenticator.login(location='main') # Authenticator uses the credentials_dict
+    with register_tab:
+        st.subheader("Create New Account")
+        # --- Your existing manual registration form logic goes here ---
+        # with st.form(...) etc.
+        with st.form("Registration_Form", clear_on_submit=False):
+            # ... (reg_name, reg_email, etc. inputs) ...
+            # ... (validation logic and call to add_user) ...
+            reg_name = st.text_input("Full Name", key="reg_form_name")
+            reg_email = st.text_input("Email Address", key="reg_form_email")
+            reg_username = st.text_input("Desired Username", key="reg_form_username")
+            reg_password = st.text_input("Password", type="password", key="reg_form_password")
+            reg_password_confirm = st.text_input("Confirm Password", type="password", key="reg_form_password_confirm")
+            submitted = st.form_submit_button("Register Account")
+            if submitted:
+                if not all([reg_name, reg_email, reg_username, reg_password, reg_password_confirm]): st.warning("Please fill in all registration fields.")
+                elif reg_password != reg_password_confirm: st.error("Passwords do not match.")
+                elif "@" not in reg_email or "." not in reg_email.split('@')[-1]: st.error("Please enter a valid email address.")
+                else:
+                    try: # Add try-except around DB checks
+                        if get_user_by_username(reg_username): st.error(f"Username '{reg_username}' is already taken.")
+                        elif get_user_by_email(reg_email): st.error(f"Email '{reg_email}' is already registered.")
+                        else:
+                            success, message = add_user(reg_username, reg_name, reg_email, reg_password)
+                            if success: st.success(message); st.info("Registration successful! Please switch to the Login tab.")
+                            else: st.error(message)
+                    except Exception as db_check_error: st.error(f"Database error during registration check: {db_check_error}"); print(f"DB Check Error: {db_check_error}")
 
-                # Display feedback based on login attempt status
-                if st.session_state.get("authentication_status") == False:
-                    st.error('Username/password is incorrect. Please try again.')
-                elif st.session_state.get("authentication_status") is None:
-                     # Initial state or after logout
-                     st.info('Please enter your username and password.')
-            else:
-                # This case should ideally not be reached if the initial authenticator check passes
-                st.error("Login is unavailable because the authenticator failed to initialize.")
+
+    with forgot_tab:
+        st.subheader("Forgot Password")
+        try:
+            # This renders a form asking for username
+            username_of_forgotten_password, email_of_forgotten_password, random_password_token = authenticator.forgot_password(location='main')
+
+            if username_of_forgotten_password:
+                st.info("Attempting to send password reset email...")
+                # Call our email helper function
+                success, message = send_password_reset_email(
+                    email_of_forgotten_password,
+                    username_of_forgotten_password,
+                    random_password_token
+                )
+                if success:
+                    st.success(message)
+                else:
+                    st.error(message)
+            elif username_of_forgotten_password is False:
+                st.error("Username not found. Please check your spelling or register a new account.")
+
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
+
+    with reset_tab:
+        st.subheader("Reset Password")
+        try:
+            # This renders a form asking for username, token, and new password
+            username_to_reset, new_password = authenticator.reset_password(location='main')
+
+            if username_to_reset:
+                # Persist the change to our database
+                if update_user_password(username_to_reset, new_password):
+                    st.success("Your password has been reset successfully! Please proceed to the Login tab.")
+                else:
+                    st.error("Failed to update password. Please contact an administrator.")
+            elif username_to_reset is False:
+                st.error("Reset token has expired or is invalid. Please request a new one from the 'Forgot Password' tab.")
+
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
 
 
     # --- Registration Tab ---

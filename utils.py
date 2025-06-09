@@ -1,6 +1,10 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
 
 @st.cache_data(ttl=300)
 
@@ -45,3 +49,51 @@ def get_current_price(ticker):
         # Catch exceptions during yf.Ticker or .info access
         print(f"!!! EXCEPTION fetching info/price for {ticker}: {e}")
         return None
+    
+def send_password_reset_email(recipient_email: str, username: str, token: str):
+    """Sends an email with the password reset token."""
+    try:
+        # Get email credentials from secrets
+        smtp_user = st.secrets["email_credentials"]["username"]
+        smtp_pass = st.secrets["email_credentials"]["password"]
+        smtp_server = st.secrets["email_credentials"]["smtp_server"]
+        smtp_port = st.secrets["email_credentials"]["smtp_port"]
+
+        # Create the email message
+        subject = "Password Reset Request - Penny Stock Challenge"
+        body = f"""
+        Hi {username},
+
+        A password reset was requested for your account. Please use the token below to reset your password in the app.
+
+        Your token is: {token}
+
+        If you did not request this, please ignore this email.
+
+        Thanks,
+        The Penny Stock Challenge Team
+        """
+
+        msg = MIMEMultipart()
+        msg['From'] = smtp_user
+        msg['To'] = recipient_email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+
+        # Send the email
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls() # Secure the connection
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+
+        print(f"Password reset email successfully sent to {recipient_email}")
+        return True, "If that user exists, a password reset email has been sent."
+
+    except KeyError:
+        error_msg = "Email sending credentials are not configured in secrets.toml."
+        print(f"ERROR: {error_msg}")
+        # Don't expose detailed errors to the user for security
+        return False, "Could not send email due to a server configuration issue."
+    except Exception as e:
+        print(f"Failed to send email: {e}")
+        return False, "An error occurred while trying to send the email."

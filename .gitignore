@@ -7,3 +7,23 @@ __pycache__/
 .venv/
 venv/
 *.env
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Secrets
+.streamlit/secrets.toml
+
+# Local Database File
+# IMPORTANT: Add this line if your Railway deployment uses a managed database
+# or persistent volume. If you intend to deploy the initial version
+# of the DB file directly from your repo, you can omit this line for now.
+trades.db
+
+# Environment folder (if it's inside your project)
+.env
+penny_challenge/
+
+# OS-specific files
+.DS_Store
