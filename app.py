@@ -768,11 +768,13 @@ else:
             st.error(f"An error occurred: {e}")
 
 
-    # --- Registration Tab ---
+   # --- Registration Tab ---
     with register_tab:
         st.subheader("Create New Account")
-        # Manual Registration Form (replaces authenticator.register_user)
-        with st.form("Registration_Form", clear_on_submit=False): # Keep values on failure
+        # Manual Registration Form
+        # The key has been changed to "New_User_Registration_Form" to ensure it is unique
+        # across the entire application and prevent duplicate key errors.
+        with st.form("New_User_Registration_Form", clear_on_submit=False): # Keep values on failure
             reg_name = st.text_input("Full Name", key="reg_form_name")
             reg_email = st.text_input("Email Address", key="reg_form_email")
             reg_username = st.text_input("Desired Username", key="reg_form_username")
@@ -790,10 +792,7 @@ else:
                     st.error("Passwords do not match. Please re-enter.")
                 # Optional: Add email format validation
                 elif "@" not in reg_email or "." not in reg_email.split('@')[-1]:
-                     st.error("Please enter a valid email address.")
-                # Optional: Add username/password complexity rules if desired
-                # elif len(reg_password) < 8:
-                #     st.error("Password must be at least 8 characters long.")
+                    st.error("Please enter a valid email address.")
                 else:
                     # --- Check Database if username/email already exist ---
                     try:
@@ -812,13 +811,11 @@ else:
                             if success:
                                 st.success(message) # Show success message from add_user
                                 st.info("Registration successful! Please switch to the Login tab and log in with your new credentials.")
-                                # Form is not automatically cleared here unless clear_on_submit=True AND successful
-                                # User needs to manually switch tab and log in.
                             else:
                                 st.error(message) # Display specific error message from add_user
                     except Exception as db_check_error:
-                         st.error(f"Database error during registration check: {db_check_error}")
-                         print(f"DB Check Error: {db_check_error}")
+                        st.error(f"Database error during registration check: {db_check_error}")
+                        print(f"DB Check Error: {db_check_error}")
 
 
 # Footer or other elements outside authentication check can go here if needed
