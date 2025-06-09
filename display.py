@@ -72,88 +72,94 @@ def display_leaderboard_value_chart(portfolios_data):
     and manually setting the Y-axis range to prevent auto-ranging errors.
     """
     st.subheader("All Participants Value Over Time")
-    all_history_dfs = []
-
-    if not portfolios_data:
-        st.info("No portfolio data available to build leaderboard chart.")
-        return
-
-    for participant, data in portfolios_data.items():
-        if history := data.get('value_history'):
-            if isinstance(history, list) and len(history) >= 1:
-                try:
-                    df = pd.DataFrame(history)
-                    df['participant'] = participant
-                    all_history_dfs.append(df)
-                except Exception:
-                    pass
-
-    if not all_history_dfs:
-        st.info("No valid history data found across all participants to plot a chart.")
-        return
-
-    try:
-        combined_df = pd.concat(all_history_dfs, ignore_index=True)
-
-        # --- NEW: Force data types to be correct and drop bad data ---
-        combined_df['timestamp'] = pd.to_datetime(combined_df['timestamp'], errors='coerce')
-        combined_df['total_value'] = pd.to_numeric(combined_df['total_value'], errors='coerce')
-        combined_df.dropna(subset=['timestamp', 'total_value'], inplace=True)
-
-        if combined_df.empty:
-            st.warning("Chart data is empty after cleaning. Please check source data.")
+    
+    with st.expander("Debug: Chart Data Processing"):
+        all_history_dfs = []
+        if not portfolios_data:
+            st.error("DEBUG: The main 'portfolios_data' object is empty.")
             return
+
+        for participant, data in portfolios_data.items():
+            if history := data.get('value_history'):
+                if isinstance(history, list) and len(history) >= 1:
+                    try:
+                        df = pd.DataFrame(history)
+                        df['participant'] = participant
+                        all_history_dfs.append(df)
+                    except Exception as e:
+                        st.warning(f"Could not create DataFrame for {participant}: {e}")
+
+        if not all_history_dfs:
+            st.error("DEBUG: 'all_history_dfs' is empty. No valid value_history found for any user.")
+            return
+
+        # --- Stage 1: Raw Combined Data ---
+        st.markdown("#### Stage 1: Raw Data from Portfolio")
+        st.write("This is the raw data collected from all users before any cleaning.")
+        raw_combined_df = pd.concat(all_history_dfs, ignore_index=True)
+        st.dataframe(raw_combined_df)
+        st.write("Data Types of Raw Data:")
+        st.code(raw_combined_df.dtypes)
+
+        # --- Stage 2: Cleaned Data ---
+        st.markdown("#### Stage 2: Cleaned Data")
+        st.write("This is the data after converting types and dropping rows with errors.")
+        cleaned_df = raw_combined_df.copy()
+        cleaned_df['timestamp'] = pd.to_datetime(cleaned_df['timestamp'], errors='coerce')
+        cleaned_df['total_value'] = pd.to_numeric(cleaned_df['total_value'], errors='coerce')
+        cleaned_df.dropna(subset=['timestamp', 'total_value'], inplace=True)
+        st.dataframe(cleaned_df)
+
+        if cleaned_df.empty:
+            st.error("DEBUG: DataFrame is empty after cleaning. All rows were dropped.")
+            return
+
+        # --- Stage 3: Normalized Data for Plotting ---
+        st.markdown("#### Stage 3: Final Data Sent to Plotly")
+        st.write("This is the final, normalized data used to draw the chart.")
+        try:
+            # Normalization
+            start_date = cleaned_df['timestamp'].min().normalize()
+            end_date = pd.Timestamp.now().normalize()
+            full_date_range = pd.date_range(start=start_date, end=end_date, freq='D')
+
+            normalized_dfs = []
+            for name, group in cleaned_df.groupby('participant'):
+                group = group.set_index('timestamp').sort_index()
+                group = group[~group.index.duplicated(keep='last')]
+                participant_normalized = group.reindex(full_date_range)
+                participant_normalized['total_value'].ffill(inplace=True)
+                participant_normalized['total_value'].bfill(inplace=True)
+                participant_normalized['participant'] = name
+                normalized_dfs.append(participant_normalized)
+
+            plot_df = pd.concat(normalized_dfs).reset_index().rename(columns={'index': 'timestamp'})
+            plot_df.dropna(subset=['total_value'], inplace=True)
+            st.dataframe(plot_df)
+
+            if plot_df.empty:
+                 st.error("DEBUG: Final plot_df is empty after normalization.")
+                 return
+
+            # --- PLOTTING ---
+            fig = px.line(
+                plot_df, x='timestamp', y='total_value', color='participant',
+                title="Portfolio Value Comparison",
+                labels={'timestamp': 'Date', 'total_value': 'Portfolio Value ($)'}
+            )
             
-        combined_df = combined_df.sort_values(by='timestamp')
-        
-        # Normalization
-        start_date = combined_df['timestamp'].min().normalize()
-        end_date = pd.Timestamp.now().normalize()
-        full_date_range = pd.date_range(start=start_date, end=end_date, freq='D')
-
-        normalized_dfs = []
-        for name, group in combined_df.groupby('participant'):
-            group = group.set_index('timestamp').sort_index()
-            group = group[~group.index.duplicated(keep='last')]
-            participant_normalized = group.reindex(full_date_range)
-            participant_normalized['total_value'].ffill(inplace=True)
-            participant_normalized['total_value'].bfill(inplace=True)
-            participant_normalized['participant'] = name
-            normalized_dfs.append(participant_normalized)
-
-        plot_df = pd.concat(normalized_dfs).reset_index().rename(columns={'index': 'timestamp'})
-        plot_df.dropna(subset=['total_value'], inplace=True) # Final safety check
-
-        # --- PLOTTING ---
-        fig = px.line(
-            plot_df, x='timestamp', y='total_value', color='participant',
-            title="Portfolio Value Comparison",
-            labels={'timestamp': 'Date', 'total_value': 'Portfolio Value ($)'}
-        )
-        
-        # Manual Y-axis ranging
-        if not plot_df.empty:
-            min_val = plot_df['total_value'].min()
-            max_val = plot_df['total_value'].max()
-            padding = (max_val - min_val) * 0.1
-            if padding < 10:
-                padding = max_val * 0.1 if max_val > 0 else 10
+            # Manual Y-axis ranging
+            min_val, max_val = plot_df['total_value'].min(), plot_df['total_value'].max()
+            padding = (max_val - min_val) * 0.1 or max_val * 0.1 or 10
             fig.update_yaxes(range=[min_val - padding, max_val + padding])
 
-        fig.update_layout(hovermode="x unified", legend_title_text='Participant')
-        fig.update_traces(line=dict(shape='hv'))
-        st.plotly_chart(fig, use_container_width=True)
+            fig.update_layout(hovermode="x unified", legend_title_text='Participant')
+            fig.update_traces(line=dict(shape='hv'))
+            st.plotly_chart(fig, use_container_width=True)
 
-        # --- NEW: Debugging Expander ---
-        with st.expander("Debug: Chart Data"):
-            st.write("This is the final data being sent to the chart. If the chart looks wrong, the values here might be incorrect.")
-            st.dataframe(plot_df)
-            st.write("Descriptive Statistics for 'total_value':")
-            st.dataframe(plot_df['total_value'].describe())
-
-    except Exception as e:
-        st.error(f"An error occurred while plotting the leaderboard chart: {e}")
-        st.exception(e)
+        except Exception as e:
+            st.error(f"An error occurred during Stage 3 (Normalization/Plotting): {e}")
+            st.exception(e)
 
 def display_portfolio_composition_chart(participant_data):
     """Displays a pie chart of the user's asset allocation."""
