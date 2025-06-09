@@ -47,12 +47,26 @@ except Exception as e:
     credentials_dict = {"usernames": {}}
 
 
-# --- Initialize Authenticator Using st.secrets for Cookie Config ---
+# --- Initialize Authenticator Using Environment Variables for Deployment ---
 authenticator = None
 try:
-    cookie_name = st.secrets["cookie"]["name"]
-    cookie_key = st.secrets["cookie"]["key"]
-    cookie_expiry = int(st.secrets["cookie"]["expiry_days"])
+    # Read cookie config from Environment Variables (set in Railway)
+    # Provide sensible defaults for local development if needed
+    cookie_name = os.environ.get("COOKIE_NAME", "pennystockcookie")
+    cookie_key = os.environ.get("COOKIE_KEY") # This MUST be set in Railway
+    cookie_expiry_str = os.environ.get("COOKIE_EXPIRY_DAYS", "30")
+
+    # Critical check for the deployment environment
+    if not cookie_key:
+        # This will cause the app to stop gracefully in Railway if the key isn't set
+        st.error("CRITICAL ERROR: COOKIE_KEY environment variable is not set in the deployment environment.")
+        st.stop()
+
+    try:
+        cookie_expiry = int(cookie_expiry_str)
+    except ValueError:
+        st.warning(f"Invalid COOKIE_EXPIRY_DAYS value. Using default 30 days.")
+        cookie_expiry = 30
 
     authenticator = stauth.Authenticate(
         credentials_dict,
@@ -60,8 +74,10 @@ try:
         cookie_key,
         cookie_expiry
     )
+
 except Exception as e:
-     st.error(f"Error initializing authenticator, likely missing secrets: {e}")
+     st.error(f"Error during authenticator initialization: {e}")
+     st.exception(e)
      st.stop()
 
 # Ensure authenticator was successfully created before proceeding
