@@ -10,7 +10,7 @@ import streamlit_authenticator as stauth
 from data_handler import load_data, save_trade, delete_trade
 from auth_handler import (
     get_all_users, add_user, get_user_by_username, get_user_by_email, delete_user,
-    update_user_password, check_password # Ensure check_password is imported
+    update_user_password, check_password
 )
 from portfolio import calculate_portfolio
 from utils import get_current_price
@@ -90,7 +90,6 @@ if st.session_state.get("authentication_status"):
     authenticator.logout('Logout', 'sidebar', key='logout_button')
     st.sidebar.divider()
 
-    # --- NEW: Change Password section in Sidebar ---
     with st.sidebar.expander("🔑 Change My Password"):
         with st.form("change_password_form", clear_on_submit=True):
             current_password = st.text_input("Current Password", type="password", key="change_pw_current")
@@ -104,22 +103,16 @@ if st.session_state.get("authentication_status"):
                 elif new_password != confirm_new_password:
                     st.error("New passwords do not match.")
                 else:
-                    # Verify current password
                     user_data = get_user_by_username(username)
                     if user_data and check_password(current_password, user_data['hashed_password']):
-                        # If correct, update to new password
                         if update_user_password(username, new_password):
                             st.success("Password updated successfully!")
-                        else:
-                            st.error("Failed to update password. Please contact admin.")
-                    else:
-                        st.error("Current password is not correct.")
-
+                        else: st.error("Failed to update password.")
+                    else: st.error("Current password is not correct.")
 
     st.sidebar.divider()
     # --- Trade Entry Form ---
     st.sidebar.header(f"Enter New Trade")
-    # ... (Your existing trade entry form logic) ...
     try:
         trades = load_data()
         portfolios = calculate_portfolio(trades.copy())
@@ -139,7 +132,6 @@ if st.session_state.get("authentication_status"):
     trade_button = st.sidebar.button("Record Trade", type="primary", key='trade_button_sidebar')
 
     if trade_button:
-        # ... (Your existing trade processing logic) ...
         # --- Trade Processing Logic ---
         basic_inputs_valid = False; ticker_determined = False; ticker_validated = False; sell_action_valid = True
         ticker_to_use = ""
@@ -184,18 +176,33 @@ if st.session_state.get("authentication_status"):
     st.title(f"📈 Penny Stock Trading Competition - Welcome {name}! 🏆")
     st.markdown("---")
 
-    # --- View Selection and Display Logic ---
     if not isinstance(portfolios, dict):
         st.error("Portfolio data is unavailable.")
     else:
-        view_options = ["My Dashboard", "Leaderboard"]
-        if st.session_state.get('is_admin'):
-            view_options.append("Admin Panel")
-        view_option = st.selectbox("Select View:", view_options, label_visibility="collapsed", key='view_select_main')
+        # --- NEW: View Selection and Refresh Button in Columns ---
+        col1, col2 = st.columns([3, 1]) # Give more space to the selectbox
+
+        with col1:
+            view_options = ["My Dashboard", "Leaderboard"]
+            if st.session_state.get('is_admin'):
+                view_options.append("Admin Panel")
+            view_option = st.selectbox(
+                "Select View:",
+                view_options,
+                label_visibility="collapsed",
+                key='view_select_main'
+            )
+
+        with col2:
+            if st.button("🔄 Refresh Live Prices", use_container_width=True):
+                st.cache_data.clear()
+                st.toast("Prices and portfolios refreshed!", icon="✅")
+                # A rerun is implicitly triggered by the button click
+        # --------------------------------------------------------
+
         st.markdown("---")
 
         if view_option == "My Dashboard":
-            # ... (Your existing My Dashboard logic) ...
             participant_data = portfolios.get(username)
             st.header(f"📊 {name}'s Dashboard")
             if participant_data:
@@ -204,9 +211,7 @@ if st.session_state.get("authentication_status"):
                 st.subheader(f"My Trade History")
                 user_trades_df = participant_data.get('trades')
                 if user_trades_df is not None and not user_trades_df.empty and 'id' in user_trades_df.columns:
-                    # Display Trade History Table with Delete
-                    user_trades_df_display = user_trades_df.sort_values(by='timestamp', ascending=False)
-                    for index, trade in user_trades_df_display.iterrows():
+                    for index, trade in user_trades_df.sort_values(by='timestamp', ascending=False).iterrows():
                         trade_id = trade['id']
                         with st.container():
                             cols = st.columns([2, 1, 1, 1, 1, 1])
@@ -215,7 +220,7 @@ if st.session_state.get("authentication_status"):
                             cols[2].write(trade['action'])
                             cols[3].write(f"{trade['shares']:,.0f}")
                             cols[4].write(f"{trade['price']:,.3f}")
-                            if cols[5].button("🗑️", key=f"delete_{trade_id}", help=f"Delete Trade ID {trade_id}"):
+                            if cols[5].button("🗑️", key=f"delete_trade_{trade_id}", help=f"Delete Trade ID {trade_id}"):
                                 if delete_trade(trade_id, username):
                                     st.success(f"Trade ID {trade_id} deleted.")
                                     st.cache_data.clear()
@@ -228,7 +233,6 @@ if st.session_state.get("authentication_status"):
                  st.info("👋 Welcome! Enter your first trade to get started.")
 
         elif view_option == "Leaderboard":
-            # ... (Your existing Leaderboard logic) ...
             leaderboard_table_data = []
             initial_capital = 500.0
             for p_name, p_data in portfolios.items():
@@ -239,11 +243,8 @@ if st.session_state.get("authentication_status"):
             display_leaderboard(leaderboard_table_data, portfolios)
 
         elif view_option == "Admin Panel":
-            # --- Admin Panel Logic ---
             if not st.session_state.get('is_admin'): st.error("⛔ Access Denied."); st.stop()
             st.header("👑 Admin Panel")
-
-            # --- User Management Section ---
             st.subheader("User Management")
             try:
                 all_users_data = get_all_users()
@@ -253,37 +254,26 @@ if st.session_state.get("authentication_status"):
                     users_df_display = users_df[list(display_cols.keys())].rename(columns=display_cols)
                     users_df_display['Admin?'] = users_df_display['Admin?'].apply(lambda x: 'Yes' if x == 1 else 'No')
                     st.dataframe(users_df_display, hide_index=True, use_container_width=True)
-
                     st.markdown("---")
-                    # --- Admin Actions in Columns ---
                     col1, col2 = st.columns(2)
-
                     with col1:
                         st.subheader("Delete User")
                         usernames_list_del = [""] + sorted([user['username'] for user in all_users_data if user['username'] != username])
                         user_to_delete = st.selectbox("Select user to delete:", usernames_list_del, key="delete_user_select")
-                        if user_to_delete:
-                            if st.button(f"⚠️ Delete User '{user_to_delete}'", type="primary"):
-                                if delete_user(user_to_delete):
-                                    st.success(f"User '{user_to_delete}' deleted.")
-                                    st.cache_data.clear()
-                                    st.rerun()
-                                else:
-                                    st.error(f"Failed to delete '{user_to_delete}'.")
-
+                        if user_to_delete and st.button(f"⚠️ Delete User '{user_to_delete}'", type="primary"):
+                            if delete_user(user_to_delete):
+                                st.success(f"User '{user_to_delete}' deleted."); st.cache_data.clear(); st.rerun()
+                            else: st.error(f"Failed to delete '{user_to_delete}'.")
                     with col2:
                         st.subheader("Reset User Password")
                         usernames_list_reset = [""] + sorted([user['username'] for user in all_users_data])
                         user_to_reset = st.selectbox("Select user to reset:", usernames_list_reset, key="reset_user_select")
                         if user_to_reset:
-                             # Define the generic password
                             generic_password = "password123"
-                            if st.button(f"🔑 Reset password for '{user_to_reset}'", type="primary"):
+                            if st.button(f"🔑 Reset password for '{user_to_reset}'"):
                                 if update_user_password(user_to_reset, generic_password):
-                                    st.success(f"Password for '{user_to_reset}' has been reset to: `{generic_password}`. Please inform the user.")
-                                else:
-                                    st.error(f"Failed to reset password for '{user_to_reset}'.")
-
+                                    st.success(f"Password for '{user_to_reset}' reset to: `{generic_password}`")
+                                else: st.error(f"Failed to reset password for '{user_to_reset}'.")
                 else: st.info("No users found.")
             except Exception as e: st.error(f"Error loading users: {e}")
 
@@ -292,18 +282,14 @@ else:
     st.title("📈 Penny Stock Trading Competition")
     st.markdown("Please log in or register to participate.")
     st.divider()
-
     login_tab, register_tab = st.tabs(["Login", "Register"])
-
     with login_tab:
         st.subheader("Member Login")
-        if not credentials_dict["usernames"]:
-            st.warning("No users exist. Please register an account.")
+        if not credentials_dict["usernames"]: st.warning("No users exist. Please register an account.")
         else:
             authenticator.login(location='main')
             if st.session_state.get("authentication_status") is False: st.error('Username/password is incorrect.')
             elif st.session_state.get("authentication_status") is None: st.info('Please enter your credentials.')
-
     with register_tab:
         st.subheader("Create New Account")
         with st.form("New_User_Registration_Form"):
@@ -312,8 +298,7 @@ else:
             reg_username = st.text_input("Desired Username", key="reg_username_unique")
             reg_password = st.text_input("Password", type="password", key="reg_password_unique")
             reg_password_confirm = st.text_input("Confirm Password", type="password", key="reg_password_confirm_unique")
-            submitted = st.form_submit_button("Register Account")
-            if submitted:
+            if st.form_submit_button("Register Account"):
                 if not all([reg_name, reg_email, reg_username, reg_password, reg_password_confirm]): st.warning("Please fill all fields.")
                 elif reg_password != reg_password_confirm: st.error("Passwords do not match.")
                 elif "@" not in reg_email or "." not in reg_email.split('@')[-1]: st.error("Please enter a valid email.")
