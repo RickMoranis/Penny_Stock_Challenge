@@ -42,7 +42,6 @@ def calculate_portfolio(trades_df: pd.DataFrame):
     
     # Determine date range for historical price fetching
     start_date = trades_df['timestamp'].min().normalize()
-    # --- CORRECTED LINE: Use pandas Timestamp for .normalize() method ---
     end_date = pd.Timestamp.now().normalize()
 
     if pd.isna(start_date):
@@ -53,9 +52,13 @@ def calculate_portfolio(trades_df: pd.DataFrame):
     if historical_prices.empty:
         st.warning("Could not fetch historical price data. Portfolio values may not be accurate.")
 
-    # Get the latest prices for current value calculation
+    # --- CORRECTED SECTION: Handle potential None return from get_current_price ---
     latest_prices_str = get_current_price(all_tickers)
+    # If the price fetch fails, default to an empty dictionary to prevent crash
+    if latest_prices_str is None:
+        latest_prices_str = {}
     latest_prices = {k: v for k, v in latest_prices_str.items() if isinstance(v, (int, float))}
+    # -----------------------------------------------------------------------------
     
     # --- Main Daily Calculation Loop ---
     participants = trades_df['participant'].unique()
