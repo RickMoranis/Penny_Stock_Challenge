@@ -6,7 +6,6 @@ import streamlit as st
 
 from utils import get_current_price
 
-# --- MODIFIED: More robust historical price fetching ---
 @st.cache_data
 def get_historical_prices(tickers, start_date, end_date):
     """
@@ -19,21 +18,17 @@ def get_historical_prices(tickers, start_date, end_date):
     all_prices = []
     for ticker in tickers:
         try:
-            # Fetch data for each ticker individually
             data = yf.download(ticker, start=start_date, end=end_date, progress=False, auto_adjust=True)['Close']
             if not data.empty:
-                data.name = ticker # Rename the series to the ticker symbol
+                data.name = ticker
                 all_prices.append(data)
         except Exception:
-            # If a ticker fails, just skip it and continue
             st.warning(f"Could not fetch historical data for ticker: {ticker}")
             continue
     
     if not all_prices:
         return pd.DataFrame()
 
-    # Concatenate all series into a single DataFrame.
-    # This handles missing data gracefully and aligns by date.
     historical_df = pd.concat(all_prices, axis=1)
     return historical_df
 
@@ -46,7 +41,6 @@ def calculate_portfolio(trades_df: pd.DataFrame):
     if trades_df.empty:
         return {}
 
-    # --- Initialization ---
     initial_capital = 500.0
     portfolios = {}
     all_tickers = trades_df['ticker'].unique().tolist()
@@ -57,18 +51,15 @@ def calculate_portfolio(trades_df: pd.DataFrame):
     if pd.isna(start_date):
         return {}
 
-    # Fetch all required historical prices in one go
     historical_prices = get_historical_prices(all_tickers, start_date, end_date + timedelta(days=1))
     if historical_prices.empty:
         st.warning("Could not fetch any historical price data. Graphs may be inaccurate.")
 
-    # Get the latest prices for current value calculation
     latest_prices_str = get_current_price(all_tickers)
     if latest_prices_str is None:
         latest_prices_str = {}
     latest_prices = {k: v for k, v in latest_prices_str.items() if isinstance(v, (int, float))}
     
-    # --- Main Daily Calculation Loop ---
     participants = trades_df['participant'].unique()
     for participant in participants:
         portfolios[participant] = {
@@ -80,7 +71,6 @@ def calculate_portfolio(trades_df: pd.DataFrame):
             'trades': trades_df[trades_df['participant'] == participant].copy()
         }
 
-    # Iterate through each day from the start to the end
     for current_date in pd.date_range(start=start_date, end=end_date):
         daily_trades = trades_df[trades_df['timestamp'] < current_date + timedelta(days=1)]
 
@@ -119,7 +109,6 @@ def calculate_portfolio(trades_df: pd.DataFrame):
             holdings_value = 0
             if not historical_prices.empty:
                 try:
-                    # Get prices for the current day, forward-fill to handle weekends/holidays
                     day_prices = historical_prices.asof(current_date)
                     for ticker, data in holdings.items():
                         if ticker in day_prices and pd.notna(day_prices[ticker]):
@@ -134,7 +123,6 @@ def calculate_portfolio(trades_df: pd.DataFrame):
                 'total_value': total_value
             })
 
-    # --- Final Calculation for Current State (using latest prices) ---
     for participant in participants:
         participant_trades = trades_df[trades_df['participant'] == participant].sort_values(by='timestamp')
         
@@ -177,12 +165,23 @@ def calculate_portfolio(trades_df: pd.DataFrame):
                 current_holdings_price[ticker] = current_price
                 total_unrealized_pl += (current_price - data['avg_price']) * data['shares']
 
+        final_total_value = cash + current_holdings_value
+
         portfolios[participant]['cash'] = cash
         portfolios[participant]['holdings'] = holdings
         portfolios[participant]['total_realized_pl'] = realized_pl
         portfolios[participant]['total_unrealized_pl'] = total_unrealized_pl
         portfolios[participant]['current_holdings_value'] = {t: d['shares'] * latest_prices.get(t, 0) for t, d in holdings.items()}
         portfolios[participant]['current_holdings_price'] = current_holdings_price
-        portfolios[participant]['total_value'] = cash + current_holdings_value
+        portfolios[participant]['total_value'] = final_total_value
+
+        # --- FIX: Add a final point to the history with the live value ---
+        # This ensures the graph line ends at the same value shown in the table.
+        if portfolios[participant]['value_history']:
+            portfolios[participant]['value_history'].append({
+                'timestamp': pd.Timestamp.now(),
+                'total_value': final_total_value
+            })
+        # ---------------------------------------------------------------
 
     return portfolios
