@@ -42,7 +42,8 @@ def calculate_portfolio(trades_df: pd.DataFrame):
     
     # Determine date range for historical price fetching
     start_date = trades_df['timestamp'].min().normalize()
-    end_date = datetime.now().normalize()
+    # --- CORRECTED LINE: Use pandas Timestamp for .normalize() method ---
+    end_date = pd.Timestamp.now().normalize()
 
     if pd.isna(start_date):
         return {}
