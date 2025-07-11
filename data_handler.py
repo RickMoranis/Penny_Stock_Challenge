@@ -5,7 +5,15 @@ import sqlite3 # Import the sqlite3 library
 from datetime import datetime # Keep datetime for potential type handling
 
 DATA_DIR = "/data" # Define a data directory mount point
-DATABASE_FILE = os.path.join(DATA_DIR, "trades.db") # Path inside /data
+# In data_handler.py
+
+# --- Smart Database Path ---
+if 'RAILWAY_ENVIRONMENT' in os.environ:
+    DATABASE_FILE = "/data/trades.db"
+else:
+    DATABASE_FILE = "trades.db"
+
+# --- Database Initialization ---
 
 def init_db():
     """Initializes the database and creates the trades table if it doesn't exist."""

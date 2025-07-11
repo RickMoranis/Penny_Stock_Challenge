@@ -4,13 +4,18 @@ import bcrypt
 import os
 from datetime import datetime
 
-# Use the same database file as data_handler.py
-# Option 1: Define it here (ensure it matches data_handler.py)
 DATA_DIR = "/data" # Define a data directory mount point
-DATABASE_FILE = os.path.join(DATA_DIR, "trades.db") # Path inside /data
-# Option 2 (Slightly cleaner): Import from data_handler if it's defined there
-# from data_handler import DATABASE_FILE # Uncomment if DATABASE_FILE defined in data_handler
+# In auth_handler.py
 
+# --- Smart Database Path ---
+# Check if a RAILWAY_ENVIRONMENT variable exists (it does on Railway)
+if 'RAILWAY_ENVIRONMENT' in os.environ:
+    # We are in the Railway deployment, use the persistent volume path
+    DATABASE_FILE = "/data/trades.db"
+else:
+    # We are running locally, use the relative path
+    DATABASE_FILE = "trades.db"
+    
 # --- Hashing Utilities ---
 
 def hash_password(plain_password):

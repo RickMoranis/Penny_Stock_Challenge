@@ -6,31 +6,25 @@ import streamlit as st
 
 from utils import get_current_price
 
+# --- MODIFIED: More efficient historical price fetching ---
 @st.cache_data
 def get_historical_prices(tickers, start_date, end_date):
     """
-    Fetches historical daily closing prices for a list of tickers.
-    This version is more robust, fetching one ticker at a time.
+    Fetches historical daily closing prices for a list of tickers
+    in a single, efficient batch request to prevent rate limiting.
     """
     if not tickers:
         return pd.DataFrame()
-
-    all_prices = []
-    for ticker in tickers:
-        try:
-            data = yf.download(ticker, start=start_date, end=end_date, progress=False, auto_adjust=True)['Close']
-            if not data.empty:
-                data.name = ticker
-                all_prices.append(data)
-        except Exception:
-            st.warning(f"Could not fetch historical data for ticker: {ticker}")
-            continue
-    
-    if not all_prices:
+    try:
+        # Download historical data for all tickers at once
+        data = yf.download(list(tickers), start=start_date, end=end_date, progress=False)['Close']
+        # If only one ticker is valid, yf returns a Series. Convert to DataFrame.
+        if isinstance(data, pd.Series):
+            data = data.to_frame(name=list(tickers)[0])
+        return data
+    except Exception as e:
+        st.error(f"An error occurred fetching historical prices: {e}")
         return pd.DataFrame()
-
-    historical_df = pd.concat(all_prices, axis=1)
-    return historical_df
 
 
 @st.cache_data
