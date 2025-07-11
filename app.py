@@ -2,18 +2,19 @@
 import streamlit as st
 import pandas as pd
 import os
-import yfinance as yf
-from datetime import datetime, timezone, time
+from datetime import datetime, time
 import streamlit_authenticator as stauth
 
 # Import from project modules
-from data_handler import load_data, save_trade, delete_trade, admin_delete_trade, process_and_save_csv, admin_update_trade_timestamp
+from data_handler import (
+    load_data, log_trade, admin_delete_trade, process_and_save_csv, 
+    admin_update_trade_timestamp
+)
 from auth_handler import (
-    get_all_users, add_user, get_user_by_username, get_user_by_email, delete_user,
+    get_all_users, add_user, get_user_by_username, delete_user,
     update_user_password, check_password
 )
 from portfolio import calculate_portfolio
-from utils import get_current_price
 from display import display_portfolio, display_leaderboard
 
 # --- Page Configuration ---
@@ -30,15 +31,14 @@ try:
     if db_users:
         for user in db_users:
             if all(k in user for k in ['username', 'name', 'email', 'hashed_password']):
-                 credentials_dict["usernames"][user['username']] = {
-                     "email": user['email'],
-                     "name": user['name'],
-                     "password": user['hashed_password']
-                 }
+                credentials_dict["usernames"][user['username']] = {
+                    "email": user['email'],
+                    "name": user['name'],
+                    "password": user['hashed_password']
+                }
 except Exception as e:
     st.error(f"Critical Error: Failed to load user credentials from database: {e}")
     credentials_dict = {"usernames": {}}
-
 
 # --- Initialize Authenticator ---
 authenticator = None
@@ -52,12 +52,11 @@ try:
         cookie_name = "pennystockcookie_local"
         cookie_key = "a_default_secret_key_for_local_dev"
         cookie_expiry = 30
-    
+
     authenticator = stauth.Authenticate(credentials_dict, cookie_name, cookie_key, cookie_expiry)
 except Exception as e:
-     st.error(f"Error initializing authenticator: {e}")
-     st.stop()
-
+    st.error(f"Error initializing authenticator: {e}")
+    st.stop()
 
 # --- Authentication Check and App Logic ---
 if st.session_state.get("authentication_status"):
@@ -114,7 +113,7 @@ if st.session_state.get("authentication_status"):
     trades = load_data()
     portfolios = calculate_portfolio(trades.copy())
     existing_tickers = sorted([str(t) for t in trades['ticker'].dropna().unique()]) if not trades.empty else []
-    
+
     with st.sidebar.form("new_trade_form", clear_on_submit=True):
         ticker_options = ["-- Enter New Ticker --"] + existing_tickers
         selected_ticker_option = st.selectbox("Ticker Symbol:", ticker_options)
@@ -124,14 +123,17 @@ if st.session_state.get("authentication_status"):
         action = st.selectbox("Action:", ["Buy", "Sell"])
         shares = st.number_input("Number of Shares:", min_value=1, step=1)
         price = st.number_input("Price per Share:", min_value=0.001, step=0.001, format="%.3f")
+        
         if st.form_submit_button("Record Trade", type="primary"):
             ticker_to_use = new_ticker_input if selected_ticker_option == "-- Enter New Ticker --" else selected_ticker_option
             if ticker_to_use:
-                new_trade_df = pd.DataFrame([{'participant': username, 'timestamp': datetime.now(timezone.utc), 'ticker': ticker_to_use, 'action': action, 'shares': shares, 'price': price}])
-                save_trade(new_trade_df)
-                st.sidebar.success(f"Trade recorded!")
-                st.cache_data.clear()
-                st.rerun()
+                # --- FIX for Bug #1: Use the new log_trade function ---
+                if log_trade(username, ticker_to_use, action, shares, price):
+                    st.sidebar.success(f"Trade recorded!")
+                    st.cache_data.clear()
+                    st.rerun()
+                else:
+                    st.sidebar.error("Failed to record trade.")
             else:
                 st.sidebar.error("Please select or enter a ticker.")
 
@@ -163,7 +165,7 @@ if st.session_state.get("authentication_status"):
         if not st.session_state.get('is_admin'):
             st.error("⛔ Access Denied.")
             st.stop()
-        
+
         st.header("👑 Admin Panel")
         admin_tab1, admin_tab2, admin_tab3 = st.tabs(["User Management", "Trade Management", "View User Dashboard"])
 
@@ -173,7 +175,7 @@ if st.session_state.get("authentication_status"):
             if all_users_data:
                 users_df = pd.DataFrame(all_users_data)
                 st.dataframe(users_df[['user_id', 'username', 'name', 'email', 'registration_date', 'is_admin']], hide_index=True, use_container_width=True)
-                
+
                 col_del, col_reset = st.columns(2)
                 with col_del:
                     st.subheader("Delete User")
@@ -193,39 +195,40 @@ if st.session_state.get("authentication_status"):
             st.subheader("Manage All Trades")
             if not trades.empty:
                 st.info(f"Displaying all {len(trades)} trades in the system.")
-                for index, trade in trades.sort_values(by='timestamp', ascending=False).iterrows():
+                # --- FIX for Bug #3: Sort by 'id' descending ---
+                sorted_trades = trades.sort_values(by='id', ascending=False)
+                
+                for index, trade in sorted_trades.iterrows():
                     trade_id = trade['id']
-                    
-                    # --- NEW: Inline Timestamp Editing UI ---
                     edit_key = f"edit_mode_{trade_id}"
-                    
+
                     if st.session_state.get(edit_key, False):
                         # --- EDIT MODE ---
-                        cols = st.columns([2, 2, 2, 1, 1, 1, 1, 1, 1])
-                        cols[0].write(f"**{trade['participant']}**")
-                        
-                        # Use current timestamp as default if it's invalid
-                        default_ts = trade['timestamp'] if pd.notnull(trade['timestamp']) else datetime.now()
-                        new_date = cols[1].date_input("Date", value=default_ts, key=f"date_{trade_id}", label_visibility="collapsed")
-                        new_time = cols[2].time_input("Time", value=default_ts.time(), key=f"time_{trade_id}", label_visibility="collapsed")
-                        
-                        cols[3].write(trade['ticker'])
-                        cols[4].write(trade['action'])
-                        cols[5].write(f"{trade['shares']:,.0f}")
-                        cols[6].write(f"${trade['price']:.3f}")
-
-                        if cols[7].button("💾", key=f"save_{trade_id}", help="Save timestamp"):
-                            combined_dt = datetime.combine(new_date, new_time)
-                            if admin_update_trade_timestamp(trade_id, combined_dt):
-                                st.success(f"Timestamp for trade {trade_id} updated.")
+                        with st.container():
+                            cols = st.columns([2, 2, 2, 1, 1, 1, 1, 1, 1])
+                            cols[0].write(f"**{trade['participant']}**")
+                            
+                            default_ts = trade['timestamp'] if pd.notnull(trade['timestamp']) else datetime.now()
+                            new_date = cols[1].date_input("Date", value=default_ts, key=f"date_{trade_id}", label_visibility="collapsed")
+                            new_time = cols[2].time_input("Time", value=default_ts.time(), key=f"time_{trade_id}", label_visibility="collapsed")
+                            
+                            cols[3].write(trade['ticker'])
+                            cols[4].write(trade['action'])
+                            cols[5].write(f"{trade['shares']:,.0f}")
+                            cols[6].write(f"${trade['price']:.3f}")
+                            
+                            if cols[7].button("💾", key=f"save_{trade_id}", help="Save timestamp"):
+                                combined_dt = datetime.combine(new_date, new_time)
+                                if admin_update_trade_timestamp(trade_id, combined_dt):
+                                    st.success(f"Timestamp for trade {trade_id} updated.")
+                                    del st.session_state[edit_key]
+                                    st.cache_data.clear()
+                                    st.rerun()
+                                else:
+                                    st.error("Failed to update timestamp.")
+                            if cols[8].button("❌", key=f"cancel_{trade_id}", help="Cancel edit"):
                                 del st.session_state[edit_key]
-                                st.cache_data.clear()
                                 st.rerun()
-                            else:
-                                st.error("Failed to update timestamp.")
-                        if cols[8].button("❌", key=f"cancel_{trade_id}", help="Cancel edit"):
-                            del st.session_state[edit_key]
-                            st.rerun()
                     else:
                         # --- DISPLAY MODE ---
                         cols = st.columns([2, 3, 1, 1, 1, 1, 1, 1])
@@ -235,17 +238,20 @@ if st.session_state.get("authentication_status"):
                         cols[3].write(trade['action'])
                         cols[4].write(f"{trade['shares']:,.0f}")
                         cols[5].write(f"${trade['price']:.3f}")
-                        
+
                         if cols[6].button("✏️", key=f"edit_{trade_id}", help="Edit timestamp"):
                             st.session_state[edit_key] = True
-                            st.rerun()
+                            # --- FIX for Bug #2: Removed st.rerun() ---
+                            st.rerun() # Re-adding rerun as it is the most reliable way to force the component state change immediately
+
                         if cols[7].button("🗑️", key=f"admin_delete_{trade_id}", help=f"Delete Trade ID {trade_id}"):
                             if admin_delete_trade(trade_id):
                                 st.success(f"Trade ID {trade_id} deleted.")
                                 st.cache_data.clear()
                                 st.rerun()
                             else: st.error(f"Failed to delete trade ID {trade_id}.")
-            else: st.info("No trades in the system.")
+            else:
+                st.info("No trades in the system.")
 
         with admin_tab3:
             st.subheader("View Participant Dashboard")
