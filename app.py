@@ -6,6 +6,23 @@ import yfinance as yf
 from datetime import datetime, timezone
 import streamlit_authenticator as stauth
 
+# --- NEW: One-time repair script trigger ---
+# Import the repair function
+from repair_timestamps import repair_timestamps
+# Check for a specific query parameter to run the repair
+query_params = st.query_params
+if query_params.get("run_repair") == "true":
+    st.title("⚙️ Running Database Repair")
+    st.info("Attempting to find and fix trades with missing timestamps. Please wait...")
+    with st.spinner("Repairing..."):
+        log_messages = repair_timestamps()
+    st.success("Repair script finished!")
+    st.code("\n".join(log_messages))
+    # Stop the rest of the app from running after the repair
+    st.stop()
+# -----------------------------------------
+
+
 # Import from project modules
 from data_handler import load_data, save_trade, delete_trade, admin_delete_trade, process_and_save_csv
 from auth_handler import (
@@ -165,7 +182,7 @@ if st.session_state.get("authentication_status"):
             st.stop()
         
         st.header("👑 Admin Panel")
-        admin_tab1, admin_tab2, admin_tab3 = st.tabs(["User Management", "Trade Management", "View User Dashboard"])
+        admin_tab1, admin_tab2, admin_tab3, admin_tab4 = st.tabs(["User Management", "Trade Management", "View User Dashboard"])
 
         with admin_tab1:
             st.subheader("Manage Users")
@@ -193,7 +210,6 @@ if st.session_state.get("authentication_status"):
             st.subheader("Manage All Trades")
             if not trades.empty:
                 st.info(f"Displaying all {len(trades)} trades in the system.")
-                # Create a header
                 cols = st.columns([2, 3, 1, 1, 1, 1, 1])
                 cols[0].write("**Participant**")
                 cols[1].write("**Timestamp**")
@@ -234,6 +250,33 @@ if st.session_state.get("authentication_status"):
                         display_portfolio(user_portfolio_data)
                     else: st.warning(f"No portfolio data found for {selected_user}")
             else: st.info("No participants with portfolios to display.")
+
+        with admin_tab4:
+            st.subheader("Database Backup")
+            st.warning("This will download a copy of the live database file. Store it in a safe place before running any repair scripts.")
+
+            try:
+                # Determine the correct database path
+                if 'RAILWAY_ENVIRONMENT' in os.environ:
+                    db_path = "/data/trades.db"
+                else:
+                    db_path = "trades.db"
+
+                if os.path.exists(db_path):
+                    with open(db_path, "rb") as fp:
+                        st.download_button(
+                            label="Download trades.db",
+                            data=fp,
+                            file_name=f"trades_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db",
+                            mime="application/octet-stream", # A generic binary file type
+                            use_container_width=True,
+                            type="primary"
+                        )
+                else:
+                    st.error(f"Database file not found at path: {db_path}")
+
+            except Exception as e:
+                st.error(f"An error occurred while preparing the database for download: {e}")
 
 # --- User NOT Logged In ---
 else:
