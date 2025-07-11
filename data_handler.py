@@ -63,23 +63,19 @@ def load_data() -> pd.DataFrame:
         if conn:
             conn.close()
 
-
 def save_trade(new_trade_df: pd.DataFrame):
-    """Saves one or more new trades to the database using a more robust method."""
+    """Saves one or more new trades to the database, ensuring timestamp is a string."""
     if new_trade_df.empty:
-        print("Error: Attempted to save an empty trade DataFrame.")
         return
-
-    if not os.path.exists(DATABASE_FILE):
-         print(f"Database file {DATABASE_FILE} not found. Initializing.")
-         init_db()
-
+    df_to_save = new_trade_df.copy()
+    if 'timestamp' in df_to_save.columns:
+        # This correctly handles timezone-aware datetimes by converting them to strings
+        df_to_save['timestamp'] = df_to_save['timestamp'].astype(str)
     conn = None
     try:
         conn = sqlite3.connect(DATABASE_FILE)
-        # Use pandas to_sql for efficient bulk inserts
-        new_trade_df.to_sql('trades', conn, if_exists='append', index=False)
-        print(f"Saved {len(new_trade_df)} trade(s) to database.")
+        df_to_save.to_sql('trades', conn, if_exists='append', index=False)
+        print(f"Saved {len(df_to_save)} trade(s) to database.")
     except Exception as e:
         print(f"Database error saving trade: {e}")
     finally:
@@ -88,12 +84,7 @@ def save_trade(new_trade_df: pd.DataFrame):
 
 def delete_trade(trade_id: int, username: str) -> bool:
     """Deletes a specific trade by its ID, ensuring it belongs to the user."""
-    if not isinstance(trade_id, int) or trade_id <= 0:
-         print(f"Error: Invalid trade_id provided for deletion: {trade_id}")
-         return False
-
     conn = None
-    deleted_count = 0
     try:
         conn = sqlite3.connect(DATABASE_FILE)
         cursor = conn.cursor()
@@ -101,31 +92,17 @@ def delete_trade(trade_id: int, username: str) -> bool:
         cursor.execute(sql, (trade_id, username))
         deleted_count = cursor.rowcount
         conn.commit()
-        if deleted_count > 0:
-             print(f"Successfully deleted trade ID {trade_id} for user {username}.")
-             return True
-        else:
-             print(f"Warning: Trade ID {trade_id} not found or does not belong to user {username}.")
-             return False
-    except sqlite3.Error as e:
+        return deleted_count > 0
+    except Exception as e:
         print(f"Database error deleting trade ID {trade_id}: {e}")
         return False
     finally:
         if conn:
             conn.close()
 
-# --- NEW: Admin function to delete any trade ---
 def admin_delete_trade(trade_id: int) -> bool:
-    """
-    Deletes a specific trade by its ID without checking the participant.
-    Intended for admin use only. Returns True on success, False on failure.
-    """
-    if not isinstance(trade_id, int) or trade_id <= 0:
-         print(f"Error: Invalid trade_id provided for admin deletion: {trade_id}")
-         return False
-
+    """Deletes a single trade by its ID, for admin use."""
     conn = None
-    deleted_count = 0
     try:
         conn = sqlite3.connect(DATABASE_FILE)
         cursor = conn.cursor()
@@ -133,14 +110,29 @@ def admin_delete_trade(trade_id: int) -> bool:
         cursor.execute(sql, (trade_id,))
         deleted_count = cursor.rowcount
         conn.commit()
-        if deleted_count > 0:
-             print(f"Admin successfully deleted trade ID {trade_id}.")
-             return True
-        else:
-             print(f"Warning: Trade ID {trade_id} not found for admin deletion.")
-             return False
-    except sqlite3.Error as e:
+        return deleted_count > 0
+    except Exception as e:
         print(f"Database error during admin delete for trade ID {trade_id}: {e}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+def admin_update_trade_timestamp(trade_id: int, new_timestamp: datetime) -> bool:
+    """Updates the timestamp for a specific trade, for admin use."""
+    conn = None
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        cursor = conn.cursor()
+        # Convert datetime object to a string in the correct format for the database
+        timestamp_str = new_timestamp.strftime('%Y-%m-%d %H:%M:%S')
+        sql = "UPDATE trades SET timestamp = ? WHERE id = ?"
+        cursor.execute(sql, (timestamp_str, trade_id))
+        updated_count = cursor.rowcount
+        conn.commit()
+        return updated_count > 0
+    except Exception as e:
+        print(f"Database error updating timestamp for trade ID {trade_id}: {e}")
         return False
     finally:
         if conn:

@@ -3,27 +3,11 @@ import streamlit as st
 import pandas as pd
 import os
 import yfinance as yf
-from datetime import datetime, timezone
+from datetime import datetime, timezone, time
 import streamlit_authenticator as stauth
 
-# --- NEW: One-time repair script trigger ---
-# Import the repair function
-from repair_timestamps import repair_timestamps
-# Check for a specific query parameter to run the repair
-query_params = st.query_params
-if query_params.get("run_repair") == "true":
-    st.title("⚙️ Running Database Repair")
-    st.info("Attempting to find and fix trades with missing timestamps. Please wait...")
-    with st.spinner("Repairing... This may take a moment."):
-        log_messages = repair_timestamps()
-    st.success("Repair script finished!")
-    st.code("\n".join(log_messages))
-    # Stop the rest of the app from running after the repair
-    st.stop()
-# -----------------------------------------
-
 # Import from project modules
-from data_handler import load_data, save_trade, delete_trade, admin_delete_trade, process_and_save_csv
+from data_handler import load_data, save_trade, delete_trade, admin_delete_trade, process_and_save_csv, admin_update_trade_timestamp
 from auth_handler import (
     get_all_users, add_user, get_user_by_username, get_user_by_email, delete_user,
     update_user_password, check_password
@@ -181,7 +165,7 @@ if st.session_state.get("authentication_status"):
             st.stop()
         
         st.header("👑 Admin Panel")
-        admin_tab1, admin_tab2, admin_tab3, admin_tab4 = st.tabs(["User Management", "Trade Management", "View User Dashboard", "Database Utilities"])
+        admin_tab1, admin_tab2, admin_tab3 = st.tabs(["User Management", "Trade Management", "View User Dashboard"])
 
         with admin_tab1:
             st.subheader("Manage Users")
@@ -209,31 +193,58 @@ if st.session_state.get("authentication_status"):
             st.subheader("Manage All Trades")
             if not trades.empty:
                 st.info(f"Displaying all {len(trades)} trades in the system.")
-                cols = st.columns([2, 3, 1, 1, 1, 1, 1])
-                cols[0].write("**Participant**")
-                cols[1].write("**Timestamp**")
-                cols[2].write("**Ticker**")
-                cols[3].write("**Action**")
-                cols[4].write("**Shares**")
-                cols[5].write("**Price**")
-                cols[6].write("**Delete**")
-                st.markdown("---")
-
                 for index, trade in trades.sort_values(by='timestamp', ascending=False).iterrows():
                     trade_id = trade['id']
-                    cols = st.columns([2, 3, 1, 1, 1, 1, 1])
-                    cols[0].write(f"{trade['participant']}")
-                    cols[1].write(trade['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if pd.notnull(trade['timestamp']) else "No Timestamp")
-                    cols[2].write(trade['ticker'])
-                    cols[3].write(trade['action'])
-                    cols[4].write(f"{trade['shares']:,.0f}")
-                    cols[5].write(f"${trade['price']:.3f}")
-                    if cols[6].button("🗑️", key=f"admin_delete_{trade_id}", help=f"Delete Trade ID {trade_id}"):
-                        if admin_delete_trade(trade_id):
-                            st.success(f"Trade ID {trade_id} deleted.")
-                            st.cache_data.clear()
+                    
+                    # --- NEW: Inline Timestamp Editing UI ---
+                    edit_key = f"edit_mode_{trade_id}"
+                    
+                    if st.session_state.get(edit_key, False):
+                        # --- EDIT MODE ---
+                        cols = st.columns([2, 2, 2, 1, 1, 1, 1, 1, 1])
+                        cols[0].write(f"**{trade['participant']}**")
+                        
+                        # Use current timestamp as default if it's invalid
+                        default_ts = trade['timestamp'] if pd.notnull(trade['timestamp']) else datetime.now()
+                        new_date = cols[1].date_input("Date", value=default_ts, key=f"date_{trade_id}", label_visibility="collapsed")
+                        new_time = cols[2].time_input("Time", value=default_ts.time(), key=f"time_{trade_id}", label_visibility="collapsed")
+                        
+                        cols[3].write(trade['ticker'])
+                        cols[4].write(trade['action'])
+                        cols[5].write(f"{trade['shares']:,.0f}")
+                        cols[6].write(f"${trade['price']:.3f}")
+
+                        if cols[7].button("💾", key=f"save_{trade_id}", help="Save timestamp"):
+                            combined_dt = datetime.combine(new_date, new_time)
+                            if admin_update_trade_timestamp(trade_id, combined_dt):
+                                st.success(f"Timestamp for trade {trade_id} updated.")
+                                del st.session_state[edit_key]
+                                st.cache_data.clear()
+                                st.rerun()
+                            else:
+                                st.error("Failed to update timestamp.")
+                        if cols[8].button("❌", key=f"cancel_{trade_id}", help="Cancel edit"):
+                            del st.session_state[edit_key]
                             st.rerun()
-                        else: st.error(f"Failed to delete trade ID {trade_id}.")
+                    else:
+                        # --- DISPLAY MODE ---
+                        cols = st.columns([2, 3, 1, 1, 1, 1, 1, 1])
+                        cols[0].write(f"**{trade['participant']}**")
+                        cols[1].write(trade['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if pd.notnull(trade['timestamp']) else "No Timestamp")
+                        cols[2].write(trade['ticker'])
+                        cols[3].write(trade['action'])
+                        cols[4].write(f"{trade['shares']:,.0f}")
+                        cols[5].write(f"${trade['price']:.3f}")
+                        
+                        if cols[6].button("✏️", key=f"edit_{trade_id}", help="Edit timestamp"):
+                            st.session_state[edit_key] = True
+                            st.rerun()
+                        if cols[7].button("🗑️", key=f"admin_delete_{trade_id}", help=f"Delete Trade ID {trade_id}"):
+                            if admin_delete_trade(trade_id):
+                                st.success(f"Trade ID {trade_id} deleted.")
+                                st.cache_data.clear()
+                                st.rerun()
+                            else: st.error(f"Failed to delete trade ID {trade_id}.")
             else: st.info("No trades in the system.")
 
         with admin_tab3:
@@ -249,35 +260,6 @@ if st.session_state.get("authentication_status"):
                         display_portfolio(user_portfolio_data)
                     else: st.warning(f"No portfolio data found for {selected_user}")
             else: st.info("No participants with portfolios to display.")
-        
-        # --- NEW: Database Backup Tab ---
-        with admin_tab4:
-            st.subheader("Database Backup")
-            st.warning("This will download a copy of the live database file. Store it in a safe place before running any repair scripts.")
-
-            try:
-                # Determine the correct database path
-                if 'RAILWAY_ENVIRONMENT' in os.environ:
-                    db_path = "/data/trades.db"
-                else:
-                    db_path = "trades.db"
-
-                if os.path.exists(db_path):
-                    with open(db_path, "rb") as fp:
-                        st.download_button(
-                            label="Download trades.db",
-                            data=fp,
-                            file_name=f"trades_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db",
-                            mime="application/octet-stream", # A generic binary file type
-                            use_container_width=True,
-                            type="primary"
-                        )
-                else:
-                    st.error(f"Database file not found at path: {db_path}")
-
-            except Exception as e:
-                st.error(f"An error occurred while preparing the database for download: {e}")
-
 
 # --- User NOT Logged In ---
 else:
