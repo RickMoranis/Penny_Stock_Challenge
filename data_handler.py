@@ -1,11 +1,8 @@
 # data_handler.py
 import pandas as pd
 import os
-import sqlite3 # Import the sqlite3 library
-from datetime import datetime # Keep datetime for potential type handling
-
-DATA_DIR = "/data" # Define a data directory mount point
-# In data_handler.py
+import sqlite3
+from datetime import datetime
 
 # --- Smart Database Path ---
 if 'RAILWAY_ENVIRONMENT' in os.environ:
@@ -18,16 +15,17 @@ else:
 def init_db():
     """Initializes the database and creates the trades table if it doesn't exist."""
     try:
-        os.makedirs(DATA_DIR, exist_ok=True)
+        # For local development, the DB will be in the root. For Railway, /data/ must exist.
+        if 'RAILWAY_ENVIRONMENT' in os.environ:
+            os.makedirs(os.path.dirname(DATABASE_FILE), exist_ok=True)
+        
         conn = sqlite3.connect(DATABASE_FILE)
         cursor = conn.cursor()
-        # Create table - Adjust column types as needed
-        # Using TEXT for timestamp for simplicity, similar to CSV read. REAL for numeric.
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS trades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 participant TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
+                timestamp TEXT,
                 ticker TEXT NOT NULL,
                 action TEXT NOT NULL,
                 shares REAL NOT NULL,
@@ -36,185 +34,160 @@ def init_db():
         ''')
         conn.commit()
         print(f"Database '{DATABASE_FILE}' initialized successfully.")
-
-       
-
     except sqlite3.Error as e:
         print(f"Database error during initialization: {e}")
     finally:
-        if conn:
+        if 'conn' in locals() and conn:
             conn.close()
 
 def load_data() -> pd.DataFrame:
     """Loads all trade data from the SQLite database into a Pandas DataFrame."""
-    # Ensure DB is initialized before loading
     if not os.path.exists(DATABASE_FILE):
          print(f"Database file {DATABASE_FILE} not found. Initializing.")
          init_db()
-         # Return empty dataframe if DB was just created empty
          return pd.DataFrame(columns=['id', 'participant', 'timestamp', 'ticker', 'action', 'shares', 'price']) 
 
-    conn = None # Initialize conn to None
+    conn = None
     try:
         conn = sqlite3.connect(DATABASE_FILE)
-        # Use pandas read_sql_query for convenience
-        query = "SELECT id, participant, timestamp, ticker, action, shares, price FROM trades" # Added 'id' here
+        query = "SELECT id, participant, timestamp, ticker, action, shares, price FROM trades"
         df = pd.read_sql_query(query, conn)
-
-        # --- Handle Timestamp Conversion ---
-        # Convert timestamp column to datetime objects here for consistency
-        # This centralizes the conversion previously done in portfolio.py
         if 'timestamp' in df.columns and not df.empty:
-             try:
-                # Attempt conversion, handling potential errors
-                df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-                # Optional: Drop rows where timestamp conversion failed if needed
-                # df = df.dropna(subset=['timestamp'])
-             except Exception as time_e:
-                  print(f"Warning: Error converting timestamp column during load: {time_e}. Check data format.")
-                  # Depending on requirements, either return df as-is or handle error differently
-
+             df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
         print(f"Loaded {len(df)} records from {DATABASE_FILE}")
         return df
-
-    except (sqlite3.Error, pd.io.sql.DatabaseError) as e:
-        print(f"Database error loading data: {e}")
-        # If loading fails (e.g., table doesn't exist yet after init somehow failed), return empty
-        # Also try to re-initialize in case the file exists but table is missing
-        print("Attempting to re-initialize DB due to load error.")
-        init_db()
-        return pd.DataFrame(columns=['participant', 'timestamp', 'ticker', 'action', 'shares', 'price'])
     except Exception as e:
          print(f"An unexpected error occurred during data load: {e}")
-         return pd.DataFrame(columns=['participant', 'timestamp', 'ticker', 'action', 'shares', 'price'])
+         return pd.DataFrame()
     finally:
         if conn:
             conn.close()
 
 
 def save_trade(new_trade_df: pd.DataFrame):
-    """Saves a new trade (passed as a single-row DataFrame) into the SQLite database."""
+    """Saves one or more new trades to the database using a more robust method."""
     if new_trade_df.empty:
         print("Error: Attempted to save an empty trade DataFrame.")
         return
 
-    # Ensure DB and table exist
     if not os.path.exists(DATABASE_FILE):
          print(f"Database file {DATABASE_FILE} not found. Initializing.")
          init_db()
 
-    conn = None # Initialize conn to None
+    conn = None
     try:
         conn = sqlite3.connect(DATABASE_FILE)
-        cursor = conn.cursor()
-
-        # Extract data from the first (and assumed only) row of the DataFrame
-        trade_data = new_trade_df.iloc[0]
-
-        # Prepare data tuple for insertion
-        # Convert timestamp to string for storage if it's a datetime object
-        timestamp_val = trade_data['timestamp']
-        if isinstance(timestamp_val, pd.Timestamp):
-             timestamp_str = timestamp_val.isoformat() # Store in standard ISO format
-        else:
-             timestamp_str = str(timestamp_val) # Assume it's already string-like
-
-        # Use parameterized query to prevent SQL injection
-        sql = ''' INSERT INTO trades(participant, timestamp, ticker, action, shares, price)
-                  VALUES(?,?,?,?,?,?) '''
-        params = (
-            trade_data['participant'],
-            timestamp_str,
-            trade_data['ticker'],
-            trade_data['action'],
-            float(trade_data['shares']), # Ensure numeric types
-            float(trade_data['price'])
-        )
-
-        cursor.execute(sql, params)
-        conn.commit()
-        print(f"Saved trade for {trade_data['participant']} - {trade_data['ticker']}")
-
-    except (sqlite3.Error, KeyError, IndexError) as e:
-        print(f"Database error saving trade: {e}")
-        # Potentially roll back if needed, though commit is atomic here
+        # Use pandas to_sql for efficient bulk inserts
+        new_trade_df.to_sql('trades', conn, if_exists='append', index=False)
+        print(f"Saved {len(new_trade_df)} trade(s) to database.")
     except Exception as e:
-         print(f"An unexpected error occurred during trade save: {e}")
+        print(f"Database error saving trade: {e}")
     finally:
         if conn:
             conn.close()
 
-def delete_trade(trade_id: int, username: str):
+def delete_trade(trade_id: int, username: str) -> bool:
     """Deletes a specific trade by its ID, ensuring it belongs to the user."""
     if not isinstance(trade_id, int) or trade_id <= 0:
          print(f"Error: Invalid trade_id provided for deletion: {trade_id}")
-         return False # Indicate failure
+         return False
 
     conn = None
     deleted_count = 0
     try:
         conn = sqlite3.connect(DATABASE_FILE)
         cursor = conn.cursor()
-        # Delete only if the id matches AND the participant matches the logged-in user
         sql = "DELETE FROM trades WHERE id = ? AND participant = ?"
         cursor.execute(sql, (trade_id, username))
-        deleted_count = cursor.rowcount # Check how many rows were affected
+        deleted_count = cursor.rowcount
         conn.commit()
         if deleted_count > 0:
              print(f"Successfully deleted trade ID {trade_id} for user {username}.")
-             return True # Indicate success
+             return True
         else:
-             print(f"Warning: Trade ID {trade_id} not found or does not belong to user {username}. No deletion occurred.")
-             return False # Indicate failure or no action needed
-
+             print(f"Warning: Trade ID {trade_id} not found or does not belong to user {username}.")
+             return False
     except sqlite3.Error as e:
         print(f"Database error deleting trade ID {trade_id}: {e}")
-        return False # Indicate failure
-    except Exception as e:
-         print(f"An unexpected error occurred during trade deletion: {e}")
-         return False # Indicate failure
+        return False
     finally:
         if conn:
             conn.close()
 
+# --- NEW: Admin function to delete any trade ---
 def admin_delete_trade(trade_id: int) -> bool:
     """
     Deletes a specific trade by its ID without checking the participant.
-    intended for admin use only. Returns True on success, False on failure.
+    Intended for admin use only. Returns True on success, False on failure.
     """
     if not isinstance(trade_id, int) or trade_id <= 0:
          print(f"Error: Invalid trade_id provided for admin deletion: {trade_id}")
-         return False # Indicate failure
+         return False
 
     conn = None
     deleted_count = 0
     try:
         conn = sqlite3.connect(DATABASE_FILE)
         cursor = conn.cursor()
-        # Delete based only on trade ID
         sql = "DELETE FROM trades WHERE id = ?"
         cursor.execute(sql, (trade_id,))
-        deleted_count = cursor.rowcount # Check how many rows were affected
+        deleted_count = cursor.rowcount
         conn.commit()
         if deleted_count > 0:
              print(f"Admin successfully deleted trade ID {trade_id}.")
-             return True # Indicate success
+             return True
         else:
-             print(f"Warning: Trade ID {trade_id} not found for admin deletion. No deletion occurred.")
-             return False # Indicate failure or no action needed
-
+             print(f"Warning: Trade ID {trade_id} not found for admin deletion.")
+             return False
     except sqlite3.Error as e:
         print(f"Database error during admin delete for trade ID {trade_id}: {e}")
-        return False # Indicate failure
-    except Exception as e:
-         print(f"An unexpected error occurred during admin trade deletion: {e}")
-         return False # Indicate failure
+        return False
     finally:
         if conn:
             conn.close()
 
+def process_and_save_csv(uploaded_file, participant_name: str) -> (bool, str):
+    """Reads a CSV file, validates it, and saves the trades to the database."""
+    try:
+        df = pd.read_csv(uploaded_file)
+    except Exception as e:
+        return False, f"Error reading CSV file: {e}"
+
+    required_columns = ['timestamp', 'ticker', 'action', 'shares', 'price']
+    df.columns = df.columns.str.lower().str.strip()
+    missing_cols = [col for col in required_columns if col not in df.columns]
+    if missing_cols:
+        return False, f"CSV is missing required columns: {', '.join(missing_cols)}"
+
+    df = df[required_columns]
+    df.dropna(inplace=True)
+
+    if df.empty:
+        return False, "No valid trade data found in the uploaded file after cleaning."
+
+    try:
+        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+        df['shares'] = pd.to_numeric(df['shares'], errors='coerce')
+        df['price'] = pd.to_numeric(df['price'], errors='coerce')
+        df['action'] = df['action'].str.strip().str.title()
+    except Exception as e:
+        return False, f"Error converting data types in CSV: {e}"
+
+    df.dropna(inplace=True)
+    df = df[df['action'].isin(['Buy', 'Sell'])]
+    df = df[(df['shares'] > 0) & (df['price'] > 0)]
+
+    if df.empty:
+        return False, "No valid trade data remaining after validation."
+
+    df['participant'] = participant_name
+
+    try:
+        save_trade(df)
+        return True, f"Successfully imported {len(df)} trades!"
+    except Exception as e:
+        return False, f"A database error occurred during import: {e}"
+
 # --- Call init_db() once on module load to ensure DB/table exists ---
-# This ensures the DB is ready before app.py tries to load/save
-# Note: This runs when the module is first imported by Streamlit
 print(f"Data handler module loaded. Checking/Initializing DB: {DATABASE_FILE}")
 init_db()
