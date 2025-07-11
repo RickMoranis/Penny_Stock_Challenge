@@ -14,14 +14,13 @@ query_params = st.query_params
 if query_params.get("run_repair") == "true":
     st.title("⚙️ Running Database Repair")
     st.info("Attempting to find and fix trades with missing timestamps. Please wait...")
-    with st.spinner("Repairing..."):
+    with st.spinner("Repairing... This may take a moment."):
         log_messages = repair_timestamps()
     st.success("Repair script finished!")
     st.code("\n".join(log_messages))
     # Stop the rest of the app from running after the repair
     st.stop()
 # -----------------------------------------
-
 
 # Import from project modules
 from data_handler import load_data, save_trade, delete_trade, admin_delete_trade, process_and_save_csv
@@ -182,7 +181,7 @@ if st.session_state.get("authentication_status"):
             st.stop()
         
         st.header("👑 Admin Panel")
-        admin_tab1, admin_tab2, admin_tab3, admin_tab4 = st.tabs(["User Management", "Trade Management", "View User Dashboard"])
+        admin_tab1, admin_tab2, admin_tab3, admin_tab4 = st.tabs(["User Management", "Trade Management", "View User Dashboard", "Database Utilities"])
 
         with admin_tab1:
             st.subheader("Manage Users")
@@ -250,7 +249,8 @@ if st.session_state.get("authentication_status"):
                         display_portfolio(user_portfolio_data)
                     else: st.warning(f"No portfolio data found for {selected_user}")
             else: st.info("No participants with portfolios to display.")
-
+        
+        # --- NEW: Database Backup Tab ---
         with admin_tab4:
             st.subheader("Database Backup")
             st.warning("This will download a copy of the live database file. Store it in a safe place before running any repair scripts.")
@@ -277,6 +277,7 @@ if st.session_state.get("authentication_status"):
 
             except Exception as e:
                 st.error(f"An error occurred while preparing the database for download: {e}")
+
 
 # --- User NOT Logged In ---
 else:
